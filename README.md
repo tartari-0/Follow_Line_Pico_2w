@@ -21,20 +21,68 @@ Firmware em C (Pico SDK 2.3.0) para um robô seguidor de linha, de acordo com as
 Esquemático completo: [`docs/esquematico_rev1.0.pdf`](docs/esquematico_rev1.0.pdf).
 Toda a pinagem fica centralizada em [`src/config.h`](src/config.h).
 
-## Estrutura
+## Arquitetura
+
+```
+ Núcleo 0 — loop de controle a 1 kHz           Núcleo 1 — comunicação
+ ┌──────────────────────────────────┐   filas  ┌──────────────────────────┐
+ │ comandos -> motores (PWM)        │ <─────── │ Wi-Fi AP + DHCP + UDP    │ <──> PC
+ │ lê encoders / barra / ADC        │ ───────> │ empacota telemetria      │
+ │ gera amostras de telemetria      │          └──────────────────────────┘
+ └──────────────────────────────────┘
+   ▲ leituras prontas em segundo plano, sem CPU:
+   │  PIO0 SM0/SM1 — encoders em quadratura 4X
+   │  PIO + DMA    — barra QRE-8D (8 sensores RC amostrados a cada 1 us)
+   │  ADC + DMA    — laterais e bateria (round-robin contínuo, 10 kSa/s por canal)
+```
 
 ```
 src/
   config.h               pinos e parâmetros do hardware
-  motors.c/h             controle dos dois TB6612FNG (PWM 20 kHz)
-  encoders.c/h           leitura de quadratura 4X via PIO
-  quadrature_encoder.pio programa PIO do encoder
-  sensors.c/h            barra QRE-8D (RC), calibração, posição da linha, laterais
-  battery.c/h            leitura da tensão da bateria
-  main.c                 menu de testes pela serial USB
+  motors.c/h             dois TB6612FNG (PWM 20 kHz)
+  encoders.c/h           quadratura 4X via PIO
+  quadrature_encoder.pio
+  line_sensor.c/h        barra QRE-8D via PIO + DMA, calibração e posição
+  line_rc.pio
+  analog.c/h             ADC contínuo via DMA (laterais e bateria)
+  comm.c/h               Wi-Fi e UDP no núcleo 1, filas entre os núcleos
+  telemetry.h            formato binário da telemetria
+  lwipopts.h             configuração da pilha TCP/IP
+  main.c                 loop de 1 kHz e interpretador de comandos
+lib/dhcpserver/          servidor DHCP (MIT, do pico-examples)
+tools/robot_link.py      terminal no PC: comandos + gravação de telemetria em CSV
 tests/                   programas de teste usados no desenvolvimento
 docs/                    esquemático
 ```
+
+## Comunicação sem fio
+
+O robô cria a própria rede Wi-Fi (não precisa de roteador):
+
+- **Rede:** `FollowLine-Pico`, senha `seguidor2026` (definida em `config.h`)
+- **Robô:** `192.168.4.1`, porta UDP `4210`
+
+```sh
+python3 tools/robot_link.py
+```
+
+Comandos (também funcionam pelo terminal USB):
+
+| Comando | Função |
+|---|---|
+| `status` | bateria, encoders, PWM, estatísticas do loop |
+| `line` / `side` / `enc` / `bat` | leitura de cada sensor |
+| `motor <1\|2> <-100..100>` | PWM de um motor em malha aberta (%) |
+| `motors <esq> <dir>` | PWM dos dois motores |
+| `stop` | para os motores |
+| `stream <N>` | telemetria a cada N ms (`stream 1` = 1 kHz, `stream 0` desliga) |
+| `cal start` / `cal stop` | calibração da barra (passe a barra sobre linha e fundo) |
+| `timeout <us>` | tempo máximo de leitura RC da barra |
+
+Comandos locais do `robot_link.py`: `:log arquivo.csv`, `:stoplog`, `:quit`.
+
+**Segurança:** se o robô ficar 1 s sem receber nada, ele para os motores. O `robot_link.py`
+envia `ping` a cada 300 ms para manter o link.
 
 ## Compilando
 
@@ -50,26 +98,29 @@ ninja -C build
 
 Grave `build/seguidor_de_linha.uf2` segurando BOOTSEL ao conectar o USB.
 
-## Uso (v0.1 — modo de testes)
+## Roteiro de teste do hardware
 
-Abra o monitor serial (USB) e use os comandos:
-
-| Tecla | Função |
-|---|---|
-| `s` | sensores de linha: bruto, calibrado e posição |
-| `l` | sensores laterais |
-| `e` | encoders (contagem e RPM) |
-| `m` | teste dos motores — **deixe o robô suspenso** |
-| `c` | calibração da barra (10 s) |
-| `b` | tensão da bateria |
-| `h` | ajuda |
+1. **Só USB, sem bateria:** grave o firmware e abra o monitor serial. Devem aparecer a mensagem
+   do Wi-Fi e o LED da placa aceso. Teste `line`, `side` e `enc` (girando a roda com a mão).
+2. **Só bateria, sem USB:** conecte o PC na rede `FollowLine-Pico` e rode `robot_link.py`.
+   Use `status` e `bat`, e compare com a tensão medida num multímetro.
+3. **Motores (robô suspenso!):** `motor 1 20`, depois `stop`, depois `motor 2 20`, depois `stop`.
+   Anote qual roda gira e para que lado, e se o encoder aumenta. Corrija `MOTOR_LEFT/RIGHT`
+   e os `*_INVERT` em `config.h`.
+4. **Barra:** `cal start`, passe a barra sobre a linha, `cal stop`. Depois `line` com a linha
+   sob cada sensor: confira se o sensor 0 é o da esquerda.
+5. **Telemetria:** `:log teste.csv`, `stream 1`, aguarde alguns segundos, `stream 0`, `:stoplog`.
+   O script informa quantos pacotes foram perdidos; o `status` mostra os atrasos do loop.
 
 ## Roadmap
 
-- [x] Drivers de hardware e menu de testes
-- [ ] Confirmar mapeamento esquerdo/direito e sentido dos motores
-- [ ] Controle PID de seguimento de linha
+- [x] Drivers de hardware
+- [x] Leitura dos sensores em segundo plano (PIO + DMA)
+- [x] Comunicação Wi-Fi: comandos e telemetria
+- [ ] Validar todo o hardware (roteiro acima)
+- [ ] Aquisições dos motores em malha aberta
+- [ ] Modelagem dos motores
+- [ ] Controle de velocidade dos motores
+- [ ] Seguimento de linha (PID / MPC)
 - [ ] Detecção das marcas laterais (curvas e partida/chegada) e parada automática
-- [ ] Controle de velocidade das rodas com encoder
-- [ ] Ajuste de parâmetros via Wi-Fi/Bluetooth (CYW43) entre tentativas
 - [ ] Mapeamento da pista e perfil de velocidade

@@ -22,10 +22,13 @@
 #define M1_ENC_BASE_PIN 16 // GP16 / GP17
 #define M2_ENC_BASE_PIN 2  // GP2  / GP3
 
-// --- Barra de sensores QRE-8D (leitura RC) ---
+// --- Barra de sensores QRE-8D (leitura RC via PIO) ---
+// Os 8 pinos precisam ser consecutivos (GP5..GP12). Sensor 0 = GP12 ... sensor 7 = GP5.
+// TODO: confirmar se o sensor 0 é o da esquerda do robô.
 #define LINE_LED_ON_PIN 4
 #define LINE_NUM_SENSORS 8
-#define LINE_SENSOR_PINS {12, 11, 10, 9, 8, 7, 6, 5}
+#define LINE_FIRST_SENSOR_PIN 12
+#define LINE_LAST_SENSOR_PIN  5
 
 // --- Sensores laterais (QTR analógicos) ---
 #define SIDE_LEFT_PIN   26 // ADC0 -> marcações de curva (lado esquerdo)
@@ -57,10 +60,28 @@
 #define ENC_PULSES_PER_REV 820.0f
 
 // Tempo máximo de descarga do RC (us). Superfície preta = timeout.
-#define LINE_RC_TIMEOUT_US 3000
-#define LINE_RC_CHARGE_US  15
+// Período de leitura da barra ≈ 15 us (carga) + timeout. Ajustável em tempo real.
+#define LINE_RC_TIMEOUT_US 1000
+
+// Taxa de amostragem de cada canal do ADC (laterais e bateria)
+#define ADC_RATE_PER_CHANNEL_HZ 10000
 
 // Tensão mínima da bateria 3S antes de alertar (3.3 V/célula)
 #define VBAT_MIN_V 9.9f
+
+// =====================================================================
+//  CONTROLE E COMUNICAÇÃO
+// =====================================================================
+
+// Período do loop principal (núcleo 0)
+#define LOOP_PERIOD_US 1000
+
+// Para os motores se nenhum comando chegar nesse intervalo
+#define LINK_TIMEOUT_MS 1000
+
+// Rede Wi-Fi criada pelo robô (modo Access Point). IP do robô: 192.168.4.1
+#define WIFI_SSID     "FollowLine-Pico"
+#define WIFI_PASSWORD "seguidor2026"
+#define UDP_PORT      4210
 
 #endif

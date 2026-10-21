@@ -8,6 +8,11 @@ static const uint sm_of[2] = {0, 1};
 static const bool invert_of[2] = {M1_ENC_INVERT, M2_ENC_INVERT};
 
 void encoders_init(void) {
+    // Reserva as SMs para que o driver do Wi-Fi (que também usa PIO) não as pegue.
+    // Deve ser chamado antes de iniciar o Wi-Fi: o programa precisa do offset 0.
+    pio_sm_claim(pio, sm_of[0]);
+    pio_sm_claim(pio, sm_of[1]);
+
     // Um único programa carregado, compartilhado pelas duas máquinas de estado
     uint offset = pio_add_program(pio, &quadrature_encoder_program);
     quadrature_encoder_program_init(pio, sm_of[0], offset, M1_ENC_BASE_PIN);

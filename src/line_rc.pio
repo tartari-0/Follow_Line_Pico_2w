@@ -1,0 +1,51 @@
+.program line_rc
+
+; Leitura RC dos 8 sensores da barra QRE-8D em paralelo.
+; Clock da SM: 10 MHz (1 ciclo = 0,1 us).
+;
+; Para cada palavra recebida no TX FIFO (nº de amostras - 1):
+;   1. Coloca os 8 pinos como saída em nível alto por 15 us (carrega os capacitores)
+;   2. Solta os pinos (entrada) e amostra os 8 pinos a cada 1 us
+; As amostras saem pelo RX FIFO via autopush (4 amostras de 8 bits por palavra),
+; e o DMA as copia para a RAM sem usar a CPU.
+
+.wrap_target
+    pull block              ; Espera o disparo de uma nova leitura
+    mov x, osr              ; X = nº de amostras - 1
+    mov osr, ~null
+    out pins, 8             ; Nível alto nos 8 pinos
+    mov osr, ~null
+    out pindirs, 8          ; Pinos como saída
+    set y, 29
+charge:
+    jmp y-- charge [4]      ; 30 x 5 ciclos = 15 us de carga
+    mov osr, null
+    out pindirs, 8          ; Pinos como entrada: começa a descarga
+sample:
+    in pins, 8 [4]          ; 5 ciclos
+    jmp x-- sample [4]      ; 5 ciclos -> 1 amostra a cada 1 us
+.wrap
+
+
+% c-sdk {
+#include "hardware/pio.h"
+#include "hardware/clocks.h"
+static inline void line_rc_program_init(PIO pio, uint sm, uint offset, uint base_pin, uint num_pins) {
+    pio_sm_config c = line_rc_program_get_default_config(offset);
+
+    sm_config_set_out_pins(&c, base_pin, num_pins);
+    sm_config_set_in_pins(&c, base_pin);
+    for (uint i = 0; i < num_pins; i++) pio_gpio_init(pio, base_pin + i);
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin, num_pins, false);
+
+    // OUT: shift para a direita, sem autopull
+    sm_config_set_out_shift(&c, true, false, 32);
+    // IN: shift para a direita com autopush a cada 32 bits -> amostra 0 no byte 0
+    sm_config_set_in_shift(&c, true, true, 32);
+
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / 10000000.0f);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
