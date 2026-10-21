@@ -53,8 +53,6 @@ target_include_directories(seguidor_de_linha PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/lib/dhcpserver
 )
 
-# Pilha maior para o núcleo 1 (callbacks do lwIP/DHCP rodam nele)
-target_compile_definitions(seguidor_de_linha PRIVATE PICO_CORE1_STACK_SIZE=0x1000)
 
 target_link_libraries(seguidor_de_linha
         pico_stdlib

@@ -7,13 +7,18 @@
 
 #define COMM_CMD_MAX_LEN 64
 
-// Inicia o Wi-Fi (Access Point + UDP) no núcleo 1.
-// Chamar depois de iniciar os PIOs do robô (o driver do Wi-Fi também usa um PIO).
+// Cria as filas entre os núcleos. Chamar antes de iniciar o núcleo de controle.
 void comm_init(void);
 
-// Funções chamadas pelo núcleo 0 (todas não bloqueantes):
+// Tarefa de comunicação (núcleo 0, nunca retorna): Wi-Fi (Access Point + UDP)
+// e terminal USB. Chamar depois de iniciar os PIOs do robô (o driver do Wi-Fi
+// também usa um PIO). O cyw43 precisa ser iniciado no núcleo 0: no núcleo 1
+// o chip não responde (do_ioctl timeout / CLM load failed).
+void comm_run(void);
 
-// Próximo comando de texto recebido por Wi-Fi, se houver
+// Funções chamadas pelo núcleo de controle (todas não bloqueantes):
+
+// Próximo comando de texto recebido (Wi-Fi ou USB), se houver
 bool comm_get_command(char *buf, size_t len);
 
 // Envia uma resposta de texto pelo Wi-Fi e pela USB (formato printf)

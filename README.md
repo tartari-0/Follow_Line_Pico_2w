@@ -24,7 +24,7 @@ Toda a pinagem fica centralizada em [`src/config.h`](src/config.h).
 ## Arquitetura
 
 ```
- Núcleo 0 — loop de controle a 1 kHz           Núcleo 1 — comunicação
+ Núcleo 1 — loop de controle a 1 kHz           Núcleo 0 — comunicação
  ┌──────────────────────────────────┐   filas  ┌──────────────────────────┐
  │ comandos -> motores (PWM)        │ <─────── │ Wi-Fi AP + DHCP + UDP    │ <──> PC
  │ lê encoders / barra / ADC        │ ───────> │ empacota telemetria      │
@@ -45,10 +45,10 @@ src/
   line_sensor.c/h        barra QRE-8D via PIO + DMA, calibração e posição
   line_rc.pio
   analog.c/h             ADC contínuo via DMA (laterais e bateria)
-  comm.c/h               Wi-Fi e UDP no núcleo 1, filas entre os núcleos
+  comm.c/h               Wi-Fi, UDP e terminal USB no núcleo 0, filas entre os núcleos
   telemetry.h            formato binário da telemetria
   lwipopts.h             configuração da pilha TCP/IP
-  main.c                 loop de 1 kHz e interpretador de comandos
+  main.c                 loop de 1 kHz (núcleo 1) e interpretador de comandos
 lib/dhcpserver/          servidor DHCP (MIT, do pico-examples)
 tools/robot_link.py      terminal no PC: comandos + gravação de telemetria em CSV
 tests/                   programas de teste usados no desenvolvimento
@@ -66,7 +66,7 @@ O robô cria a própria rede Wi-Fi (não precisa de roteador):
 python3 tools/robot_link.py
 ```
 
-Comandos (também funcionam pelo terminal USB):
+Comandos (também funcionam pelo terminal USB — o terminal precisa enviar Enter/fim de linha):
 
 | Comando | Função |
 |---|---|

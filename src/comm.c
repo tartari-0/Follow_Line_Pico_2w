@@ -3,7 +3,6 @@
 #include <stdarg.h>
 #include <string.h>
 #include "pico/stdlib.h"
-#include "pico/multicore.h"
 #include "pico/util/queue.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/udp.h"
@@ -17,13 +16,13 @@ typedef struct { char text[COMM_CMD_MAX_LEN]; } cmd_msg_t;
 typedef struct { char text[REPLY_MAX_LEN]; } reply_msg_t;
 
 // Filas entre núcleos (seguras para multicore)
-static queue_t cmd_queue;       // núcleo 1 -> núcleo 0
-static queue_t reply_queue;     // núcleo 0 -> núcleo 1
-static queue_t telemetry_queue; // núcleo 0 -> núcleo 1
+static queue_t cmd_queue;       // comunicação (núcleo 0) -> controle (núcleo 1)
+static queue_t reply_queue;     // controle -> comunicação
+static queue_t telemetry_queue; // controle -> comunicação
 
 static volatile uint32_t dropped_samples;
 
-// --- Estado do núcleo 1 ---
+// --- Estado da tarefa de comunicação (núcleo 0) ---
 static struct udp_pcb *pcb;
 static ip_addr_t peer_addr;
 static uint16_t peer_port;
@@ -32,7 +31,7 @@ static dhcp_server_t dhcp_server;
 static telemetry_packet_t packet;
 static uint32_t packet_seq;
 
-// Callback do lwIP (núcleo 1): chega um comando do PC
+// Callback do lwIP: chega um comando do PC
 static void on_udp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p,
                         const ip_addr_t *addr, u16_t port) {
     (void)arg;
@@ -72,10 +71,26 @@ static void send_packet(void) {
     packet.count = 0;
 }
 
-static void core1_main(void) {
+// Lê comandos digitados no terminal USB, linha a linha
+static void poll_usb_command(void) {
+    static cmd_msg_t msg;
+    static int len;
+    int c;
+    while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+        if (c == '\r' || c == '\n') {
+            msg.text[len] = '\0';
+            if (len > 0) queue_try_add(&cmd_queue, &msg);
+            len = 0;
+        } else if (len < COMM_CMD_MAX_LEN - 1) {
+            msg.text[len++] = (char)c;
+        }
+    }
+}
+
+void comm_run(void) {
     if (cyw43_arch_init()) {
         printf("ERRO: falha ao iniciar o Wi-Fi\n");
-        return;
+        while (true) poll_usb_command();
     }
     cyw43_arch_enable_ap_mode(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK);
 
@@ -97,8 +112,10 @@ static void core1_main(void) {
     while (true) {
         reply_msg_t reply;
         while (queue_try_remove(&reply_queue, &reply)) {
+            printf("%s\n", reply.text);
             udp_send_buf(reply.text, strlen(reply.text));
         }
+        poll_usb_command();
 
         while (queue_try_remove(&telemetry_queue, &packet.samples[packet.count])) {
             if (packet.count++ == 0) packet_start = time_us_64();
@@ -116,7 +133,6 @@ void comm_init(void) {
     queue_init(&cmd_queue, sizeof(cmd_msg_t), 8);
     queue_init(&reply_queue, sizeof(reply_msg_t), 16);
     queue_init(&telemetry_queue, sizeof(telemetry_sample_t), TELEMETRY_QUEUE_LEN);
-    multicore_launch_core1(core1_main);
 }
 
 bool comm_get_command(char *buf, size_t len) {
@@ -134,7 +150,6 @@ void comm_reply(const char *fmt, ...) {
     vsnprintf(msg.text, sizeof(msg.text), fmt, args);
     va_end(args);
 
-    printf("%s\n", msg.text);
     queue_try_add(&reply_queue, &msg);
 }
 

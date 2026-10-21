@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include "config.h"
 #include "motors.h"
 #include "encoders.h"
@@ -9,7 +10,7 @@
 #include "analog.h"
 #include "comm.h"
 
-// --- Estado do loop principal (núcleo 0) ---
+// --- Estado do loop de controle (núcleo 1) ---
 static float pwm_cmd[2];          // Comando atual dos motores 1 e 2 (%)
 static bool motors_on;
 static bool calibrating;
@@ -135,29 +136,12 @@ static void handle_command(char *line) {
     }
 }
 
-// Lê comandos digitados no terminal USB, linha a linha
-static void poll_usb_command(void) {
-    static char buf[COMM_CMD_MAX_LEN];
-    static int len;
-    int c;
-    while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
-        if (c == '\r' || c == '\n') {
-            buf[len] = '\0';
-            if (len > 0) handle_command(buf);
-            len = 0;
-        } else if (len < COMM_CMD_MAX_LEN - 1) {
-            buf[len++] = (char)c;
-        }
-    }
-}
-
 static void loop_step(void) {
     uint32_t t_us = time_us_32();
 
     // 1. Comandos
     char cmd[COMM_CMD_MAX_LEN];
     while (comm_get_command(cmd, sizeof(cmd))) handle_command(cmd);
-    poll_usb_command();
 
     // 2. Segurança: sem comandos por muito tempo -> para os motores
     if (motors_on && absolute_time_diff_us(last_cmd_time, get_absolute_time()) > LINK_TIMEOUT_MS * 1000) {
@@ -192,18 +176,16 @@ static void loop_step(void) {
     gpio_put(STATUS_LED_PIN, (loop_count / 500) % 2);
 }
 
-int main(void) {
-    stdio_init_all();
+// Alinhada em 8 bytes: exigência da ABI do ARM (senão printf com float quebra)
+static uint32_t control_stack[8192 / 4] __attribute__((aligned(8)));
 
-    gpio_init(STATUS_LED_PIN);
-    gpio_set_dir(STATUS_LED_PIN, GPIO_OUT);
-
-    // Os PIOs do robô precisam ser iniciados antes do Wi-Fi
-    motors_init();
-    encoders_init();
+// Núcleo 1: loop de controle de período fixo. Não faz nenhuma E/S de comunicação
+// diretamente (só filas), então o Wi-Fi e a USB não interferem no tempo do loop.
+static void control_core_main(void) {
+    // As interrupções de DMA da barra ficam neste núcleo
     line_init();
     analog_init();
-    comm_init();
+    multicore_fifo_push_blocking(1); // Avisa o núcleo 0 que os PIOs estão alocados
 
     last_cmd_time = get_absolute_time();
     absolute_time_t next = get_absolute_time();
@@ -223,4 +205,22 @@ int main(void) {
         }
         busy_wait_until(next);
     }
+}
+
+// Núcleo 0: comunicação (Wi-Fi + USB)
+int main(void) {
+    stdio_init_all();
+
+    gpio_init(STATUS_LED_PIN);
+    gpio_set_dir(STATUS_LED_PIN, GPIO_OUT);
+
+    // Os PIOs do robô precisam ser alocados antes do Wi-Fi
+    motors_init();
+    encoders_init();
+    comm_init();
+
+    multicore_launch_core1_with_stack(control_core_main, control_stack, sizeof(control_stack));
+    multicore_fifo_pop_blocking();
+
+    comm_run();
 }
