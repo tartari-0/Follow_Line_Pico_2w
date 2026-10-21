@@ -1,0 +1,66 @@
+.program quadrature_encoder
+
+; Tabela de transição de estados 4X para Quadratura
+; (precisa ficar no endereço 0: o "mov pc, isr" pula direto para a linha)
+.origin 0
+    jmp update      ; 00 -> 00 (sem mudança)
+    jmp minus       ; 00 -> 01 (girou sentido anti-horário)
+    jmp plus        ; 00 -> 10 (girou sentido horário)
+    jmp update      ; 00 -> 11 (ruído elétrico/inválido)
+    jmp plus        ; 01 -> 00
+    jmp update      ; 01 -> 01
+    jmp update      ; 01 -> 10
+    jmp minus       ; 01 -> 11
+    jmp minus       ; 10 -> 00
+    jmp update      ; 10 -> 01
+    jmp update      ; 10 -> 10
+    jmp plus        ; 10 -> 11
+    jmp update      ; 11 -> 00
+    jmp plus        ; 11 -> 01
+    jmp minus       ; 11 -> 10
+    jmp update      ; 11 -> 11
+
+; --- LÓGICA DE CONTAGEM ---
+plus:
+    mov x, ~x       ; Inverte X
+    jmp x-- nop_p   ; Decrementa X
+nop_p:
+    mov x, ~x       ; Inverte novamente (O resultado prático é: X = X + 1)
+    jmp update
+
+minus:
+    jmp x-- update  ; Decrementa X (X = X - 1)
+
+; --- LOOP PRINCIPAL DO PIO ---
+update:
+    mov isr, x      ; Pega a contagem atual (X)
+    push noblock    ; Envia para a CPU (se a fila encher, descarta)
+
+    mov isr, null   ; Limpa a variável de trabalho (ISR)
+    in y, 2         ; Puxa os 2 bits do estado passado
+    in pins, 2      ; Puxa os 2 bits do estado atual
+    mov y, isr      ; Salva o estado atual para o próximo ciclo
+    mov pc, isr     ; Pula para a linha certa na tabela de transição
+
+
+% c-sdk {
+#include "hardware/pio.h"
+static inline void quadrature_encoder_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = quadrature_encoder_program_get_default_config(offset);
+
+    // Mapeia os 2 pinos sequenciais
+    sm_config_set_in_pins(&c, pin);
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin + 1);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 2, false);
+
+    gpio_pull_up(pin);
+    gpio_pull_up(pin + 1);
+
+    // Shift para a esquerda, sem auto-push
+    sm_config_set_in_shift(&c, false, false, 32);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
