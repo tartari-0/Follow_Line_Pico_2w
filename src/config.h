@@ -46,13 +46,15 @@
 // =====================================================================
 
 // Qual motor é o esquerdo/direito e o sentido de cada um.
-// TODO: confirmar no robô com o modo de teste de motores ('m' no menu).
+// Sentidos dos motores e dos encoders conferidos no robô: PWM positivo = para
+// frente, e o encoder conta positivo.
+// TODO: confirmar se o motor 1 é mesmo o esquerdo.
 #define MOTOR_LEFT  1
 #define MOTOR_RIGHT 2
 #define M1_INVERT   false
 #define M2_INVERT   true
-#define M1_ENC_INVERT false
-#define M2_ENC_INVERT true
+#define M1_ENC_INVERT true
+#define M2_ENC_INVERT false
 
 #define PWM_FREQ_HZ 20000 // 20 kHz: fora da faixa audível, TB6612 aceita até 100 kHz
 
