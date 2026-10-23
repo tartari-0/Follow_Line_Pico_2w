@@ -6,3 +6,4 @@ build/
 *.hex
 *.dis
 *.map
+__pycache__/
