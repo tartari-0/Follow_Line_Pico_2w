@@ -9,6 +9,7 @@
 #include "line_sensor.h"
 #include "analog.h"
 #include "comm.h"
+#include "experiment.h"
 
 // --- Estado do loop de controle (núcleo 1) ---
 static float pwm_cmd[2];          // Comando atual dos motores 1 e 2 (%)
@@ -19,6 +20,7 @@ static uint32_t loop_count;
 static uint32_t overruns;         // Ciclos que passaram do período
 static uint32_t max_loop_us;
 static absolute_time_t last_cmd_time;
+static float vbat_filtered;
 
 static void set_motor(int m, float percent) {
     if (percent > 100.0f) percent = 100.0f;
@@ -29,6 +31,16 @@ static void set_motor(int m, float percent) {
         motors_enable(true);
     }
     motor_set(m, percent);
+}
+
+// Habilita o driver mesmo com PWM 0. No TB6612, PWM 0 com o driver habilitado
+// é freio (terminais em curto), ou seja, 0 V aplicado: comportamento linear,
+// adequado para os ensaios. Desabilitado, o motor fica em roda livre.
+static void enable_motors(void) {
+    if (!motors_on) {
+        motors_on = true;
+        motors_enable(true);
+    }
 }
 
 static void stop_motors(void) {
@@ -62,16 +74,19 @@ static void print_calibration(void) {
 }
 
 static void print_help(void) {
-    comm_reply("ping | status | line | side | enc | bat");
+    comm_reply("ping | info | status | line | side | enc | bat");
     comm_reply("motor <1|2> <-100..100> | motors <esq> <dir> | stop");
     comm_reply("stream <N> (1 amostra a cada N ms, 0 = desliga)");
     comm_reply("cal start | cal stop | cal | timeout <us>");
+    comm_reply("exp step <alvo> <pwm> <ms> | exp stairs <alvo> <pwm_max> <n> <ms_degrau>");
+    comm_reply("exp ramp <alvo> <pwm_ini> <pwm_fim> <ms> | exp prbs <alvo> <pwm_medio> <amp> <ms_bit> <ms>");
+    comm_reply("exp stop | alvo: 1, 2, ambos, rot");
 }
 
 static void handle_command(char *line) {
-    char *argv[4];
+    char *argv[8];
     int argc = 0;
-    for (char *tok = strtok(line, " \t\r\n"); tok && argc < 4; tok = strtok(NULL, " \t\r\n")) {
+    for (char *tok = strtok(line, " \t\r\n"); tok && argc < 8; tok = strtok(NULL, " \t\r\n")) {
         argv[argc++] = tok;
     }
     if (argc == 0) return;
@@ -83,10 +98,15 @@ static void handle_command(char *line) {
         // Só mantém o link vivo (sem resposta para não poluir)
     } else if (!strcmp(cmd, "help")) {
         print_help();
+    } else if (!strcmp(cmd, "info")) {
+        // Lido pelo tools/acquire.py e salvo junto com os dados
+        comm_reply("info fw=%s ppr=%.1f loop_us=%d speed_window=%d pre_ms=%d post_ms=%d pwm_hz=%d",
+                   PICO_PROGRAM_VERSION_STRING, (double)ENC_PULSES_PER_REV, LOOP_PERIOD_US,
+                   ENC_SPEED_WINDOW, EXP_PRE_MS, EXP_POST_MS, PWM_FREQ_HZ);
     } else if (!strcmp(cmd, "status")) {
-        comm_reply("bat: %.2f V | enc: %ld %ld | pwm: %.1f %.1f | motores %s",
-                   battery_voltage(), (long)encoder_get_count(1), (long)encoder_get_count(2),
-                   pwm_cmd[0], pwm_cmd[1], motors_on ? "ON" : "OFF");
+        comm_reply("bat: %.2f V | enc: %ld %ld | vel: %.2f %.2f rad/s | pwm: %.1f %.1f | motores %s",
+                   vbat_filtered, (long)encoder_count(1), (long)encoder_count(2),
+                   encoder_speed(1), encoder_speed(2), pwm_cmd[0], pwm_cmd[1], motors_on ? "ON" : "OFF");
         comm_reply("loop: %lu ciclos, %lu atrasos, max %lu us | descartadas: %lu | timeout barra: %u us",
                    (unsigned long)loop_count, (unsigned long)overruns, (unsigned long)max_loop_us,
                    (unsigned long)comm_dropped_samples(), line_get_timeout_us());
@@ -96,10 +116,30 @@ static void handle_command(char *line) {
     } else if (!strcmp(cmd, "side")) {
         comm_reply("side esq: %u | dir: %u", side_left(), side_right());
     } else if (!strcmp(cmd, "enc")) {
-        comm_reply("enc: %ld %ld", (long)encoder_get_count(1), (long)encoder_get_count(2));
+        comm_reply("enc: %ld %ld | vel: %.2f %.2f rad/s", (long)encoder_count(1), (long)encoder_count(2),
+                   encoder_speed(1), encoder_speed(2));
     } else if (!strcmp(cmd, "bat")) {
-        float v = battery_voltage();
+        float v = vbat_filtered;
         comm_reply("bat: %.2f V%s", v, v < VBAT_MIN_V ? " (BAIXA!)" : "");
+    } else if (!strcmp(cmd, "exp") && argc >= 2) {
+        if (!strcmp(argv[1], "stop")) {
+            if (exp_running()) {
+                exp_stop();
+                stop_motors();
+                comm_reply("exp abortado");
+            }
+        } else {
+            const char *err = exp_start(argc - 1, &argv[1]);
+            if (err) {
+                comm_reply("exp erro: %s", err);
+            } else {
+                enable_motors();
+                if (stream_div == 0) stream_div = 1; // Garante a telemetria a 1 kHz
+                comm_reply("exp inicio: %s", exp_description());
+            }
+        }
+    } else if (exp_running() && (!strcmp(cmd, "motor") || !strcmp(cmd, "motors"))) {
+        comm_reply("ensaio em andamento: use 'exp stop' antes");
     } else if (!strcmp(cmd, "motor") && argc == 3) {
         int m = atoi(argv[1]);
         if (m == 1 || m == 2) {
@@ -112,6 +152,7 @@ static void handle_command(char *line) {
         set_motor(MOTOR_RIGHT, r);
         comm_reply("esq = %.1f %% | dir = %.1f %%", l, r);
     } else if (!strcmp(cmd, "stop")) {
+        exp_stop();
         stop_motors();
         comm_reply("motores parados");
     } else if (!strcmp(cmd, "stream") && argc == 2) {
@@ -145,30 +186,55 @@ static void loop_step(void) {
 
     // 2. Segurança: sem comandos por muito tempo -> para os motores
     if (motors_on && absolute_time_diff_us(last_cmd_time, get_absolute_time()) > LINK_TIMEOUT_MS * 1000) {
+        if (exp_running()) {
+            exp_stop();
+            comm_reply("exp abortado: link perdido");
+        }
         stop_motors();
         comm_reply("link perdido: motores parados");
     }
 
-    // 3. Sensores (já lidos em segundo plano pelo PIO/DMA)
+    // 3. Sensores (encoders lidos agora; barra e ADC já lidos em segundo plano)
+    encoders_update();
+    vbat_filtered += 0.2f * (battery_voltage() - vbat_filtered); // tau ~ 5 ms
+
+    // 4. Ensaio em malha aberta
+    bool exp_sample = exp_running();
+    if (exp_sample) {
+        float u1, u2;
+        if (exp_update(&u1, &u2)) {
+            set_motor(1, u1);
+            set_motor(2, u2);
+        } else {
+            exp_sample = false;
+        }
+        if (!exp_running()) {
+            stop_motors();
+            comm_reply("exp fim: %s", exp_description());
+        }
+    }
+
     static uint32_t last_line_seq;
     uint16_t raw[LINE_NUM_SENSORS];
     uint32_t seq = line_get_raw(raw);
     if (calibrating && seq != last_line_seq) line_calibrate_update(raw);
     last_line_seq = seq;
 
-    // 4. Telemetria
-    if (stream_div && loop_count % stream_div == 0) {
+    // 5. Telemetria (durante ensaios, todas as amostras)
+    if (stream_div && (exp_sample || loop_count % stream_div == 0)) {
         telemetry_sample_t s;
         s.t_us = t_us;
-        s.enc[0] = encoder_get_count(1);
-        s.enc[1] = encoder_get_count(2);
+        s.enc[0] = encoder_count(1);
+        s.enc[1] = encoder_count(2);
+        s.speed[0] = encoder_speed(1);
+        s.speed[1] = encoder_speed(2);
         s.pwm[0] = (int16_t)(pwm_cmd[0] * 10.0f);
         s.pwm[1] = (int16_t)(pwm_cmd[1] * 10.0f);
         memcpy(s.line_raw, raw, sizeof(raw));
         s.side[0] = side_left();
         s.side[1] = side_right();
-        s.vbat_mv = (uint16_t)(battery_voltage() * 1000.0f);
-        s.flags = motors_on ? 1 : 0;
+        s.vbat_mv = (uint16_t)(vbat_filtered * 1000.0f);
+        s.flags = (motors_on ? TELEMETRY_FLAG_MOTORS : 0) | (exp_sample ? TELEMETRY_FLAG_EXPERIMENT : 0);
         comm_push_sample(&s);
     }
 
@@ -188,6 +254,7 @@ static void control_core_main(void) {
     multicore_fifo_push_blocking(1); // Avisa o núcleo 0 que os PIOs estão alocados
 
     last_cmd_time = get_absolute_time();
+    vbat_filtered = battery_voltage();
     absolute_time_t next = get_absolute_time();
 
     while (true) {

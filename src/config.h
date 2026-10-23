@@ -59,6 +59,9 @@
 // Leitura 4X, por volta da roda (medido girando 10 voltas, igual nas duas rodas)
 #define ENC_PULSES_PER_REV 815.0f
 
+// Janela da estimativa de velocidade, em ciclos do loop (ms)
+#define ENC_SPEED_WINDOW 10
+
 // Tempo máximo de descarga do RC (us). Superfície preta = timeout.
 // Período de leitura da barra ≈ 15 us (carga) + timeout. Ajustável em tempo real.
 #define LINE_RC_TIMEOUT_US 1000
@@ -73,11 +76,16 @@
 //  CONTROLE E COMUNICAÇÃO
 // =====================================================================
 
-// Período do loop principal (núcleo 0)
+// Período do loop de controle (núcleo 1)
 #define LOOP_PERIOD_US 1000
 
 // Para os motores se nenhum comando chegar nesse intervalo
 #define LINK_TIMEOUT_MS 1000
+
+// Ensaios em malha aberta: tempo parado antes e depois do sinal, e duração máxima
+#define EXP_PRE_MS  500
+#define EXP_POST_MS 1500
+#define EXP_MAX_MS  120000
 
 // Rede Wi-Fi criada pelo robô (modo Access Point). IP do robô: 192.168.4.1
 #define WIFI_SSID     "FollowLine-Pico"

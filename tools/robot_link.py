@@ -13,22 +13,13 @@ Digite comandos do robô (help, status, motor 1 30, stream 1, ...) ou comandos l
 import argparse
 import csv
 import socket
-import struct
 import sys
 import threading
 import time
 
-ROBOT_IP = "192.168.4.1"
-ROBOT_PORT = 4210
-KEEPALIVE_S = 0.3
+from robot_protocol import ROBOT_IP, ROBOT_PORT, SAMPLE_FIELDS, is_telemetry, parse_telemetry
 
-# Deve bater com src/telemetry.h
-TELEMETRY_MAGIC = 0xA55A
-HEADER = struct.Struct("<HHII")
-SAMPLE = struct.Struct("<I2i2h8H2HHH")
-CSV_COLUMNS = (["t_us", "enc1", "enc2", "pwm1", "pwm2"]
-               + [f"line{i}" for i in range(8)]
-               + ["side_left", "side_right", "vbat_mv", "flags"])
+KEEPALIVE_S = 0.3
 
 
 class RobotLink:
@@ -52,7 +43,7 @@ class RobotLink:
             self.stop_log()
             self.csv_file = open(path, "w", newline="")
             self.csv_writer = csv.writer(self.csv_file)
-            self.csv_writer.writerow(CSV_COLUMNS)
+            self.csv_writer.writerow(SAMPLE_FIELDS)
             self.samples_logged = 0
             self.lost_packets = 0
             self.expected_seq = None
@@ -67,7 +58,7 @@ class RobotLink:
             self.csv_writer = None
 
     def handle_telemetry(self, data):
-        magic, count, seq, dropped = HEADER.unpack_from(data)
+        seq, _, samples = parse_telemetry(data)
         if self.expected_seq is not None and seq != self.expected_seq:
             self.lost_packets += (seq - self.expected_seq) & 0xFFFFFFFF
         self.expected_seq = (seq + 1) & 0xFFFFFFFF
@@ -75,9 +66,9 @@ class RobotLink:
         with self.lock:
             if not self.csv_writer:
                 return
-            for i in range(count):
-                self.csv_writer.writerow(SAMPLE.unpack_from(data, HEADER.size + i * SAMPLE.size))
-            self.samples_logged += count
+            for sample in samples:
+                self.csv_writer.writerow(sample.values())
+            self.samples_logged += len(samples)
 
     def receiver(self):
         while self.running:
@@ -87,7 +78,7 @@ class RobotLink:
                 continue
             except OSError:
                 break
-            if len(data) >= HEADER.size and struct.unpack_from("<H", data)[0] == TELEMETRY_MAGIC:
+            if is_telemetry(data):
                 self.handle_telemetry(data)
             else:
                 print(f"\r< {data.decode(errors='replace')}\n> ", end="", flush=True)
