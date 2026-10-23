@@ -45,10 +45,8 @@
 //  PARÂMETROS DO HARDWARE
 // =====================================================================
 
-// Qual motor é o esquerdo/direito e o sentido de cada um.
-// Sentidos dos motores e dos encoders conferidos no robô: PWM positivo = para
-// frente, e o encoder conta positivo.
-// TODO: confirmar se o motor 1 é mesmo o esquerdo.
+// Conferido no robô: motor 1 = roda esquerda, motor 2 = roda direita;
+// PWM positivo = para frente, e o encoder conta positivo.
 #define MOTOR_LEFT  1
 #define MOTOR_RIGHT 2
 #define M1_INVERT   false
@@ -58,8 +56,8 @@
 
 #define PWM_FREQ_HZ 20000 // 20 kHz: fora da faixa audível, TB6612 aceita até 100 kHz
 
-// Leitura 4X do encoder (medido nos testes)
-#define ENC_PULSES_PER_REV 820.0f
+// Leitura 4X, por volta da roda (medido girando 10 voltas, igual nas duas rodas)
+#define ENC_PULSES_PER_REV 815.0f
 
 // Tempo máximo de descarga do RC (us). Superfície preta = timeout.
 // Período de leitura da barra ≈ 15 us (carga) + timeout. Ajustável em tempo real.
