@@ -62,6 +62,14 @@ def plot_single(path):
     axes[3].set_ylabel("bateria (V)")
     axes[3].set_xlabel("tempo (s)")
 
+    # Trechos com o driver desligado (roda livre, sem freio)
+    if "driver" in df and (df["driver"] == 0).any() and (df["driver"] == 1).any():
+        free = (df["driver"] == 0).to_numpy()
+        for ax in axes:
+            ax.fill_between(t, 0, 1, where=free, transform=ax.get_xaxis_transform(),
+                            color="gray", alpha=0.15, linewidth=0)
+        axes[0].fill_between([], [], color="gray", alpha=0.15, label="driver desligado")
+
     for ax in axes[:3]:
         ax.legend(loc="upper right")
     for ax in axes:

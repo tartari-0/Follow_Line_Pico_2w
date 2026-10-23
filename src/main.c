@@ -88,6 +88,7 @@ static void print_help(void) {
     comm_reply("cal start | cal stop | cal | timeout <us>");
     comm_reply("exp step <alvo> <pwm> <ms> | exp stairs <alvo> <pwm_max> <n> <ms_degrau>");
     comm_reply("exp ramp <alvo> <pwm_ini> <pwm_fim> <ms> | exp prbs <alvo> <pwm_medio> <amp> <ms_bit> <ms>");
+    comm_reply("exp coast <alvo> <pwm> <ms_ligado> <ms_livre>");
     comm_reply("exp stop | alvo: 1, 2, ambos, rot");
 }
 
@@ -201,8 +202,12 @@ static void loop_sample(void) {
     if (exp_sample) {
         float u1, u2;
         exp_update(&u1, &u2);
-        set_motor(1, u1);
-        set_motor(2, u2);
+        if (exp_coasting()) {
+            if (motors_on) stop_motors(); // Roda livre: driver desligado, sem freio
+        } else {
+            set_motor(1, u1);
+            set_motor(2, u2);
+        }
         if (!exp_running()) exp_just_finished = true;
     }
 }
@@ -248,7 +253,7 @@ static void loop_background(uint32_t t_us) {
         e.pwm[0] = (int16_t)(pwm_cmd[0] * 10.0f);
         e.pwm[1] = (int16_t)(pwm_cmd[1] * 10.0f);
         e.vbat_mv = (uint16_t)(vbat_filtered * 1000.0f);
-        e.flags = TELEMETRY_FLAG_MOTORS | TELEMETRY_FLAG_EXPERIMENT;
+        e.flags = (motors_on ? TELEMETRY_FLAG_MOTORS : 0) | TELEMETRY_FLAG_EXPERIMENT;
         exp_log_add(&e);
     }
     if (exp_just_finished) {

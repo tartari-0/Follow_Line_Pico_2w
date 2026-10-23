@@ -12,6 +12,9 @@
 //   stairs <alvo> <pwm_max> <n_degraus> <ms_por_degrau>   (sobe até pwm_max e desce)
 //   ramp   <alvo> <pwm_inicial> <pwm_final> <duração_ms>
 //   prbs   <alvo> <pwm_médio> <amplitude> <ms_por_bit> <duração_ms>
+//   coast  <alvo> <pwm> <ms_ligado> <ms_livre>
+//          degrau e depois o driver DESLIGADO (roda livre, sem freio): mede atrito e
+//          inércia, e verifica o encoder sem ruído do acionamento
 // PWM em % (-100..100).
 
 // Inicia um ensaio a partir dos argumentos (argv[0] = tipo).
@@ -24,6 +27,9 @@ bool exp_running(void);
 // Avança 1 ciclo do loop e escreve o PWM (%) dos motores 1 e 2.
 // Retorna false quando o ensaio terminou.
 bool exp_update(float *pwm1, float *pwm2);
+
+// true durante a fase de roda livre do ensaio coast (driver deve ficar desligado)
+bool exp_coasting(void);
 
 // Número total de amostras (ms) do ensaio: pré + sinal + pós
 unsigned exp_total_samples(void);

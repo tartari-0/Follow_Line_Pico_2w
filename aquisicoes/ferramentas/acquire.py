@@ -16,6 +16,7 @@ Ensaios (alvo: 1, 2, ambos, rot):
     stairs <alvo> <pwm_max> <n_degraus> <ms_por_degrau>
     ramp   <alvo> <pwm_inicial> <pwm_final> <duração_ms>
     prbs   <alvo> <pwm_médio> <amplitude> <ms_por_bit> <duração_ms>
+    coast  <alvo> <pwm> <ms_ligado> <ms_livre>   (depois do degrau, driver desligado)
 
 Gera <arquivo>.csv com as colunas:
     t_s     tempo desde o início do ensaio (s)
@@ -23,6 +24,7 @@ Gera <arquivo>.csv com as colunas:
     enc1/2  contagem absoluta dos encoders (pulsos 4X)
     speed1/2 velocidade das rodas calculada no robô (rad/s)
     vbat    tensão da bateria (V)
+    driver  1 = driver ligado (PWM 0 = freio), 0 = desligado (roda livre)
     t_us    relógio do robô (us), para checar a regularidade da amostragem
 e <arquivo>.json com o comando, a data, a nota, os parâmetros do firmware, o commit
 do git do firmware e das ferramentas (para saber exatamente qual código gerou os dados)
@@ -54,7 +56,7 @@ FINISH_TIMEOUT_S = 5.0   # Tempo para recuperar o que faltar depois do fim
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "dados"
 
-CSV_COLUMNS = ["t_s", "pwm1", "pwm2", "enc1", "enc2", "speed1", "speed2", "vbat", "t_us"]
+CSV_COLUMNS = ["t_s", "pwm1", "pwm2", "enc1", "enc2", "speed1", "speed2", "vbat", "driver", "t_us"]
 
 
 class Acquisition:
@@ -213,6 +215,7 @@ def to_rows(samples):
             s["enc1"], s["enc2"],
             f"{s['speed1']:.4f}", f"{s['speed2']:.4f}",
             s["vbat_mv"] / 1000.0,
+            s["flags"] & 1,
             s["t_us"],
         ])
     return rows

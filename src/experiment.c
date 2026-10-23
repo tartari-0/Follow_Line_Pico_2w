@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "config.h"
 
-typedef enum { EXP_STEP, EXP_STAIRS, EXP_RAMP, EXP_PRBS } exp_type_t;
+typedef enum { EXP_STEP, EXP_STAIRS, EXP_RAMP, EXP_PRBS, EXP_COAST } exp_type_t;
 typedef enum { TARGET_M1, TARGET_M2, TARGET_BOTH, TARGET_ROT } exp_target_t;
 
 static bool running;
@@ -13,6 +13,7 @@ static exp_type_t type;
 static exp_target_t target;
 static float p[4];          // Parâmetros numéricos do ensaio
 static uint32_t signal_ms;  // Duração do sinal (sem pré/pós)
+static uint32_t post_ms;    // Duração do pós (coast: fase de roda livre)
 static uint32_t t_ms;       // Tempo desde o início do ensaio
 static uint16_t lfsr;
 static char description[64];
@@ -33,7 +34,7 @@ static int prbs_next_bit(void) {
 
 const char *exp_start(int argc, char **argv) {
     if (running) return "ja existe um ensaio em andamento";
-    if (argc < 3) return "uso: exp <step|stairs|ramp|prbs> <1|2|ambos|rot> <parametros>";
+    if (argc < 3) return "uso: exp <step|stairs|ramp|prbs|coast> <1|2|ambos|rot> <parametros>";
 
     const char *t = argv[0];
     int nparams;
@@ -41,7 +42,8 @@ const char *exp_start(int argc, char **argv) {
     else if (!strcmp(t, "stairs")) { type = EXP_STAIRS; nparams = 3; }
     else if (!strcmp(t, "ramp")) { type = EXP_RAMP; nparams = 3; }
     else if (!strcmp(t, "prbs")) { type = EXP_PRBS; nparams = 4; }
-    else return "tipo desconhecido (step, stairs, ramp, prbs)";
+    else if (!strcmp(t, "coast")) { type = EXP_COAST; nparams = 3; }
+    else return "tipo desconhecido (step, stairs, ramp, prbs, coast)";
 
     const char *tg = argv[1];
     if (!strcmp(tg, "1")) target = TARGET_M1;
@@ -53,9 +55,14 @@ const char *exp_start(int argc, char **argv) {
     if (argc != 2 + nparams) return "numero de parametros errado (help exp)";
     for (int i = 0; i < nparams; i++) p[i] = (float)atof(argv[2 + i]);
 
+    post_ms = EXP_POST_MS;
     switch (type) {
         case EXP_STEP:
             signal_ms = (uint32_t)p[1];
+            break;
+        case EXP_COAST:
+            signal_ms = (uint32_t)p[1];
+            post_ms = (uint32_t)p[2];
             break;
         case EXP_STAIRS:
             if (p[1] < 1 || p[2] < 1) return "n_degraus e ms_por_degrau devem ser >= 1";
@@ -70,7 +77,7 @@ const char *exp_start(int argc, char **argv) {
             break;
     }
     if (signal_ms == 0) return "duracao deve ser > 0";
-    if (signal_ms + EXP_PRE_MS + EXP_POST_MS > EXP_MAX_MS) return "ensaio longo demais";
+    if (signal_ms + EXP_PRE_MS + post_ms > EXP_MAX_MS) return "ensaio longo demais";
 
     snprintf(description, sizeof(description), "%s %s", t, tg);
     for (int i = 0; i < nparams; i++) {
@@ -93,7 +100,12 @@ bool exp_running(void) {
 }
 
 unsigned exp_total_samples(void) {
-    return EXP_PRE_MS + signal_ms + EXP_POST_MS;
+    return EXP_PRE_MS + signal_ms + post_ms;
+}
+
+bool exp_coasting(void) {
+    // t_ms já foi avançado por exp_update(): a amostra atual é t_ms - 1
+    return running && type == EXP_COAST && t_ms > EXP_PRE_MS + signal_ms;
 }
 
 const char *exp_description(void) {
@@ -104,6 +116,7 @@ const char *exp_description(void) {
 static float signal_at(uint32_t t) {
     switch (type) {
         case EXP_STEP:
+        case EXP_COAST:
             return p[0];
         case EXP_STAIRS: {
             int n = (int)p[1];
@@ -139,6 +152,6 @@ bool exp_update(float *pwm1, float *pwm2) {
     }
 
     t_ms++;
-    if (t_ms >= EXP_PRE_MS + signal_ms + EXP_POST_MS) running = false;
+    if (t_ms >= EXP_PRE_MS + signal_ms + post_ms) running = false;
     return true;
 }

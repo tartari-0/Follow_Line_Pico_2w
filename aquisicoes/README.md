@@ -73,6 +73,7 @@ python3 aquisicoes/ferramentas/plot_exp.py aquisicoes/dados/2026-10-23_degraus_s
 | `stairs <alvo> <pwm_max> <n> <ms_degrau>` | escada que sobe até `pwm_max` e desce | zona morta, curva estática, histerese |
 | `ramp <alvo> <pwm_ini> <pwm_fim> <ms>` | rampa linear | curva estática |
 | `prbs <alvo> <pwm_medio> <amp> <ms_bit> <ms>` | PRBS de 16 bits, semente fixa | identificação |
+| `coast <alvo> <pwm> <ms_ligado> <ms_livre>` | degrau e depois driver desligado (roda livre) | atrito e inércia; checar o encoder sem ruído do acionamento |
 
 Alvo: `1` (esq), `2` (dir), `ambos` (mesmo sinal) ou `rot` (motor 2 com o sinal invertido).
 PWM negativo = ré.
@@ -87,6 +88,7 @@ das ferramentas e contagem de amostras perdidas). Colunas do CSV:
 | `enc1`, `enc2` | contagem absoluta dos encoders (pulsos 4X, 815 por volta da roda) |
 | `speed1`, `speed2` | velocidade da roda calculada no robô (rad/s, janela de 10 ms; os gráficos mostram em RPM) |
 | `vbat` | bateria (V, filtro de ~5 ms) |
+| `driver` | 1 = driver ligado (PWM 0 = freio), 0 = desligado (roda livre) |
 | `t_us` | relógio do robô (us) |
 
 **Observações para a modelagem:**
