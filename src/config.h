@@ -59,6 +59,11 @@
 // Leitura 4X, por volta da roda (medido girando 10 voltas, igual nas duas rodas)
 #define ENC_PULSES_PER_REV 815.0f
 
+// Clock das SMs dos encoders. Define o filtro de ruído: uma transição só conta se
+// ficar estável por 32 ciclos (5 MHz -> 6,4 us). As bordas reais ficam > 30 us
+// uma da outra na velocidade máxima (~100 rad/s).
+#define ENC_PIO_FREQ_HZ 5000000
+
 // Janela da estimativa de velocidade, em ciclos do loop (ms)
 #define ENC_SPEED_WINDOW 10
 

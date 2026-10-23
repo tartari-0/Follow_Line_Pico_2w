@@ -17,8 +17,8 @@ void encoders_init(void) {
 
     // Um único programa carregado, compartilhado pelas duas máquinas de estado
     uint offset = pio_add_program(pio, &quadrature_encoder_program);
-    quadrature_encoder_program_init(pio, sm_of[0], offset, M1_ENC_BASE_PIN);
-    quadrature_encoder_program_init(pio, sm_of[1], offset, M2_ENC_BASE_PIN);
+    quadrature_encoder_program_init(pio, sm_of[0], offset, M1_ENC_BASE_PIN, ENC_PIO_FREQ_HZ);
+    quadrature_encoder_program_init(pio, sm_of[1], offset, M2_ENC_BASE_PIN, ENC_PIO_FREQ_HZ);
 }
 
 int32_t encoder_get_count(int motor) {
