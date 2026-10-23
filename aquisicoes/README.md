@@ -29,7 +29,9 @@ ensaios de qualquer duração chegam completos, mesmo com quedas de até ~5 s. O
 registra quantos pacotes foram recuperados e se sobrou alguma amostra faltando.
 
 A amostragem é feita com as interrupções desligadas no instante exato do ciclo, então
-`t_us` avança exatamente 1000 us por amostra (`jitter_max_us` no `.json`).
+`t_us` avança 1000 us por amostra, com desvios de poucos us. O `.json` registra o maior
+desvio (`jitter_max_us`) e quantos intervalos se desviaram mais de 10 us
+(`intervalos_irregulares`, que deve ser 0).
 
 ## Rastreabilidade
 

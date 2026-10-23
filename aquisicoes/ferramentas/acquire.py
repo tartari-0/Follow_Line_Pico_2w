@@ -218,13 +218,14 @@ def to_rows(samples):
     return rows
 
 
-def sampling_jitter(samples, period_us):
-    """Maior desvio (us) do intervalo entre amostras em relação ao período."""
-    worst = 0
+def sampling_jitter(samples, period_us, tolerance_us=10):
+    """(maior desvio em us, nº de intervalos com desvio > tolerância) em relação ao período."""
+    worst = irregular = 0
     for a, b in zip(samples, samples[1:]):
-        dt = (b["t_us"] - a["t_us"]) & 0xFFFFFFFF
-        worst = max(worst, abs(dt - period_us))
-    return worst
+        dev = abs(((b["t_us"] - a["t_us"]) & 0xFFFFFFFF) - period_us)
+        worst = max(worst, dev)
+        irregular += dev > tolerance_us
+    return worst, irregular
 
 
 def default_name(command, campaign):
@@ -287,7 +288,7 @@ def main():
             samples, stats = acq.run(args.ensaio)
             total = stats["amostras_previstas"] or 0
             missing = total - len(samples)
-            stats["jitter_max_us"] = sampling_jitter(samples, period_us)
+            stats["jitter_max_us"], stats["intervalos_irregulares"] = sampling_jitter(samples, period_us)
 
             metadata = {
                 "ensaio": args.ensaio,
@@ -309,6 +310,9 @@ def main():
                 print(f"  {stats['pacotes_retransmitidos']} pacotes recuperados por retransmissão")
             if missing:
                 print(f"  ATENÇÃO: {missing} amostras faltando. Considere repetir o ensaio.")
+            if stats["intervalos_irregulares"]:
+                print(f"  ATENÇÃO: {stats['intervalos_irregulares']} intervalos de amostragem com desvio"
+                      f" > 10 us (máximo {stats['jitter_max_us']} us)")
             if rep < args.repeticoes:
                 time.sleep(args.intervalo)
     except KeyboardInterrupt:

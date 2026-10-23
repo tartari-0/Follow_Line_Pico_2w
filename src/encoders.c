@@ -25,11 +25,14 @@ int32_t encoder_get_count(int motor) {
     if (motor < 1 || motor > 2) return 0;
     uint sm = sm_of[motor - 1];
 
-    // Esvazia leituras velhas da fila e pega a mais recente
-    while (!pio_sm_is_rx_fifo_empty(pio, sm)) {
-        pio_sm_get(pio, sm);
-    }
-    int32_t count = (int32_t)pio_sm_get_blocking(pio, sm);
+    // O PIO coloca a contagem na fila continuamente. Lê as N entradas que já estão
+    // lá mais uma, que é garantidamente recente. O número de leituras é limitado:
+    // esvaziar "até ficar vazia" podia ficar centenas de us correndo atrás do PIO
+    // (mesma solução do quadrature_encoder do pico-examples).
+    uint n = pio_sm_get_rx_fifo_level(pio, sm) + 1;
+    uint32_t value = 0;
+    while (n--) value = pio_sm_get_blocking(pio, sm);
+    int32_t count = (int32_t)value;
     return invert_of[motor - 1] ? -count : count;
 }
 
@@ -46,10 +49,10 @@ static uint32_t hist_filled;
 static float speed[2];
 
 void encoders_update(void) {
-    uint32_t now = time_us_32();
     hist_idx = (hist_idx + 1) % HIST_LEN;
-    time_hist[hist_idx] = now;
     for (int i = 0; i < 2; i++) count_hist[i][hist_idx] = encoder_get_count(i + 1);
+    uint32_t now = time_us_32();
+    time_hist[hist_idx] = now;
     if (hist_filled < HIST_LEN) hist_filled++;
 
     if (hist_filled < HIST_LEN) return;
