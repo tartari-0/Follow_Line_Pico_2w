@@ -85,7 +85,7 @@ das ferramentas e contagem de amostras perdidas). Colunas do CSV:
 | `t_s` | tempo desde o início do ensaio (s) |
 | `pwm1`, `pwm2` | comando dos motores (%) |
 | `enc1`, `enc2` | contagem absoluta dos encoders (pulsos 4X, 815 por volta da roda) |
-| `speed1`, `speed2` | velocidade da roda calculada no robô (rad/s, janela de 10 ms) |
+| `speed1`, `speed2` | velocidade da roda calculada no robô (rad/s, janela de 10 ms; os gráficos mostram em RPM) |
 | `vbat` | bateria (V, filtro de ~5 ms) |
 | `t_us` | relógio do robô (us) |
 

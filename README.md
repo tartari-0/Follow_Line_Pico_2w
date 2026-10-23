@@ -88,8 +88,12 @@ Comandos (também funcionam pelo terminal USB — o terminal precisa enviar Ente
 
 Comandos locais do `robot_link.py`: `:log arquivo.csv`, `:stoplog`, `:quit`.
 
-**Segurança:** se o robô ficar 1 s sem receber nada, ele para os motores. O `robot_link.py`
-envia `ping` a cada 300 ms para manter o link.
+**Segurança:**
+- Se o robô ficar 1 s sem receber nada, ele para os motores.
+- **Parada de emergência por travamento:** se um motor receber PWM >= 25% e a roda ficar
+  parada (< 2 rad/s) por 300 ms, os motores são cortados e o ensaio é abortado
+  (`STALL_*` em `config.h`). O motor parece ter enrolamento de 6 V (R ~ 4-5 ohm): travado
+  a 12,6 V puxaria ~2,8 A. O `robot_link.py` envia `ping` a cada 300 ms para manter o link.
 
 ## Compilando
 

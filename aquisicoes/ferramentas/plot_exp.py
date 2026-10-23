@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 MOTORS = [("1", "M1 (esq)"), ("2", "M2 (dir)")]
-RAD_S_TO_RPM = 60.0 / (2.0 * np.pi)
+RAD_S_TO_RPM = 60.0 / (2.0 * np.pi)  # O CSV guarda rad/s; os gráficos mostram RPM
 
 
 def load(path):
@@ -52,19 +52,15 @@ def plot_single(path):
 
     for m, label in motors:
         axes[0].plot(t, df[f"pwm{m}"], label=label)
-        axes[1].plot(t, df[f"speed{m}"], label=label)
+        axes[1].plot(t, df[f"speed{m}"] * RAD_S_TO_RPM, label=label)
         axes[2].plot(t, df[f"enc{m}"] - df[f"enc{m}"].iloc[0], label=label)
     axes[3].plot(t, df["vbat"], color="tab:red")
 
     axes[0].set_ylabel("PWM (%)")
-    axes[1].set_ylabel("velocidade (rad/s)")
+    axes[1].set_ylabel("velocidade (RPM)")
     axes[2].set_ylabel("pulsos (desde o início)")
     axes[3].set_ylabel("bateria (V)")
     axes[3].set_xlabel("tempo (s)")
-
-    # Eixo secundário em RPM para a velocidade
-    rpm = axes[1].secondary_yaxis("right", functions=(lambda w: w * RAD_S_TO_RPM, lambda r: r / RAD_S_TO_RPM))
-    rpm.set_ylabel("RPM")
 
     for ax in axes[:3]:
         ax.legend(loc="upper right")
@@ -82,9 +78,9 @@ def plot_overlay(paths):
         name = Path(path).stem
         for m, label in active_motors(df):
             axes[0].plot(df["t_s"], df[f"pwm{m}"], label=f"{name} {label}")
-            axes[1].plot(df["t_s"], df[f"speed{m}"], label=f"{name} {label}")
+            axes[1].plot(df["t_s"], df[f"speed{m}"] * RAD_S_TO_RPM, label=f"{name} {label}")
     axes[0].set_ylabel("PWM (%)")
-    axes[1].set_ylabel("velocidade (rad/s)")
+    axes[1].set_ylabel("velocidade (RPM)")
     axes[1].set_xlabel("tempo (s)")
     for ax in axes:
         ax.grid(True, alpha=0.3)

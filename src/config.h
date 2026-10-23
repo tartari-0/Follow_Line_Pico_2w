@@ -84,6 +84,13 @@
 // Período do loop de controle (núcleo 1)
 #define LOOP_PERIOD_US 1000
 
+// Parada de emergência por travamento: se um motor receber |PWM| >= STALL_PWM_MIN
+// e a roda ficar abaixo de STALL_SPEED_MIN por STALL_TIME_MS, os motores são cortados.
+// Motor provavelmente de 6 V (R ~ 4-5 ohm): travado a 12,6 V puxaria ~2,8 A.
+#define STALL_PWM_MIN   25.0f  // % (~3 V; travado abaixo disso a corrente é < 0,7 A)
+#define STALL_SPEED_MIN 2.0f   // rad/s na roda (~19 RPM)
+#define STALL_TIME_MS   300    // A partida normal sai dessa condição em dezenas de ms
+
 // Para os motores se nenhum comando chegar nesse intervalo
 #define LINK_TIMEOUT_MS 1000
 

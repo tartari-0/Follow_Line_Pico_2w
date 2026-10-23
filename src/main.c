@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "config.h"
@@ -26,6 +27,8 @@ static absolute_time_t last_cmd_time;
 static float vbat_filtered;
 static bool exp_sample;           // A amostra deste ciclo pertence a um ensaio
 static bool exp_just_finished;
+static uint32_t stall_ms[2];      // Tempo (ms) de cada motor na condição de travamento
+static uint32_t emergency_stops;
 
 static void set_motor(int m, float percent) {
     if (percent > 100.0f) percent = 100.0f;
@@ -115,6 +118,7 @@ static void handle_command(char *line) {
         comm_reply("loop: %lu ciclos, %lu atrasos, max %lu us | descartadas: %lu | timeout barra: %u us",
                    (unsigned long)loop_count, (unsigned long)overruns, (unsigned long)max_loop_us,
                    (unsigned long)comm_dropped_samples(), line_get_timeout_us());
+        comm_reply("paradas de emergencia (travamento): %lu", (unsigned long)emergency_stops);
         max_loop_us = 0;
     } else if (!strcmp(cmd, "line")) {
         print_line();
@@ -203,6 +207,32 @@ static void loop_sample(void) {
     }
 }
 
+// Corta os motores se algum ficar travado: PWM alto com a roda parada.
+// Protege motor e driver (travado a 12,6 V, a corrente passaria de 2,5 A).
+static void check_stall(void) {
+    if (!motors_on) {
+        stall_ms[0] = stall_ms[1] = 0;
+        return;
+    }
+    for (int m = 1; m <= 2; m++) {
+        bool stalled = fabsf(pwm_cmd[m - 1]) >= STALL_PWM_MIN && fabsf(encoder_speed(m)) < STALL_SPEED_MIN;
+        stall_ms[m - 1] = stalled ? stall_ms[m - 1] + 1 : 0;
+        if (stall_ms[m - 1] >= STALL_TIME_MS) {
+            float pwm = pwm_cmd[m - 1];
+            if (exp_running()) {
+                exp_stop();
+                comm_reply("exp abortado: motor travado");
+            }
+            stop_motors();
+            emergency_stops++;
+            comm_reply("PARADA DE EMERGENCIA: motor %d travado (PWM %.0f %%, roda parada por %d ms)",
+                       m, pwm, STALL_TIME_MS);
+            stall_ms[0] = stall_ms[1] = 0;
+            return;
+        }
+    }
+}
+
 // Restante do ciclo, com interrupções ligadas
 static void loop_background(uint32_t t_us) {
     vbat_filtered += 0.2f * (battery_voltage() - vbat_filtered); // tau ~ 5 ms
@@ -242,14 +272,17 @@ static void loop_background(uint32_t t_us) {
         comm_reply("link perdido: motores parados");
     }
 
-    // 4. Barra de sensores (já lida em segundo plano pelo PIO/DMA)
+    // 4. Parada de emergência: motor com PWM alto e roda parada (travado)
+    check_stall();
+
+    // 5. Barra de sensores (já lida em segundo plano pelo PIO/DMA)
     static uint32_t last_line_seq;
     uint16_t raw[LINE_NUM_SENSORS];
     uint32_t seq = line_get_raw(raw);
     if (calibrating && seq != last_line_seq) line_calibrate_update(raw);
     last_line_seq = seq;
 
-    // 5. Telemetria livre (visualização; sem garantia de entrega)
+    // 6. Telemetria livre (visualização; sem garantia de entrega)
     if (stream_div && loop_count % stream_div == 0) {
         telemetry_sample_t s;
         s.t_us = t_us;
