@@ -47,6 +47,7 @@ src/
   analog.c/h             ADC contínuo via DMA (laterais e bateria)
   comm.c/h               Wi-Fi, UDP e terminal USB no núcleo 0, filas entre os núcleos
   experiment.c/h         geração dos sinais de ensaio (degrau, escada, rampa, PRBS)
+  exp_log.c/h            buffer circular das amostras de ensaio (retransmissão)
   telemetry.h            formato binário da telemetria
   lwipopts.h             configuração da pilha TCP/IP
   main.c                 loop de 1 kHz (núcleo 1) e interpretador de comandos

@@ -25,6 +25,9 @@ bool exp_running(void);
 // Retorna false quando o ensaio terminou.
 bool exp_update(float *pwm1, float *pwm2);
 
+// Número total de amostras (ms) do ensaio: pré + sinal + pós
+unsigned exp_total_samples(void);
+
 // Descrição do ensaio em andamento/último (para log)
 const char *exp_description(void);
 

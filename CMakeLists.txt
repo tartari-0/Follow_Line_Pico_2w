@@ -37,11 +37,12 @@ add_executable(seguidor_de_linha
         src/analog.c
         src/comm.c
         src/experiment.c
+        src/exp_log.c
         lib/dhcpserver/dhcpserver.c
 )
 
 pico_set_program_name(seguidor_de_linha "seguidor_de_linha")
-pico_set_program_version(seguidor_de_linha "0.3")
+pico_set_program_version(seguidor_de_linha "0.4")
 
 pico_enable_stdio_uart(seguidor_de_linha 0)
 pico_enable_stdio_usb(seguidor_de_linha 1)

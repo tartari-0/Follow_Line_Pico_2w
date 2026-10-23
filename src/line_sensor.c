@@ -30,7 +30,7 @@ static inline int bit_to_sensor(int bit) {
     return LINE_NUM_SENSORS - 1 - bit;
 }
 
-static void start_reading(void) {
+static void __not_in_flash_func(start_reading)(void) {
     uint16_t n = active_samples = num_samples;
     dma_channel_set_trans_count(dma_ch, n / 4, false);
     dma_channel_set_write_addr(dma_ch, sample_buf, true);
@@ -38,7 +38,7 @@ static void start_reading(void) {
 }
 
 // Converte as amostras no tempo em que cada pino foi a zero
-static void process_samples(uint16_t n) {
+static void __not_in_flash_func(process_samples)(uint16_t n) {
     const uint8_t *s = (const uint8_t *)sample_buf;
     uint16_t raw[LINE_NUM_SENSORS];
     uint8_t pending = 0xFF;
@@ -59,7 +59,8 @@ static void process_samples(uint16_t n) {
     latest_seq++;
 }
 
-static void line_dma_irq_handler(void) {
+// Na RAM: tempo de execução previsível (sem espera pela flash)
+static void __not_in_flash_func(line_dma_irq_handler)(void) {
     if (!dma_channel_get_irq0_status(dma_ch)) return;
     dma_channel_acknowledge_irq0(dma_ch);
 

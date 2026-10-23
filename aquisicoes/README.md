@@ -21,6 +21,16 @@ Uma **campanha** é uma série de ensaios feitos nas mesmas condições (ex.: `d
 `prbs_chao`). Use `--campanha` no `acquire.py`; o padrão é `geral`. Os scripts funcionam a
 partir de qualquer pasta.
 
+## Transmissão sem perdas
+
+As amostras do ensaio são numeradas e o robô guarda os últimos 5 s na RAM
+(`EXP_LOG_LEN`). O `acquire.py` pede de novo (`resend`) o que se perder no Wi-Fi, então
+ensaios de qualquer duração chegam completos, mesmo com quedas de até ~5 s. O `.json`
+registra quantos pacotes foram recuperados e se sobrou alguma amostra faltando.
+
+A amostragem é feita com as interrupções desligadas no instante exato do ciclo, então
+`t_us` avança exatamente 1000 us por amostra (`jitter_max_us` no `.json`).
+
 ## Rastreabilidade
 
 Cada `.json` guarda:

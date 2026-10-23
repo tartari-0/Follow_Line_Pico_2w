@@ -24,8 +24,12 @@ Gera <arquivo>.csv com as colunas:
     speed1/2 velocidade das rodas calculada no robô (rad/s)
     vbat    tensão da bateria (V)
     t_us    relógio do robô (us), para checar a regularidade da amostragem
-e <arquivo>.json com o comando, a data, a nota, os parâmetros do firmware e o
-commit do git do firmware e das ferramentas (para saber exatamente qual código gerou os dados).
+e <arquivo>.json com o comando, a data, a nota, os parâmetros do firmware, o commit
+do git do firmware e das ferramentas (para saber exatamente qual código gerou os dados)
+e estatísticas da transmissão (retransmissões, amostras faltando, jitter).
+
+As amostras perdidas no Wi-Fi são pedidas de novo ao robô, que guarda os últimos 5 s
+do ensaio na RAM; ensaios de qualquer duração chegam completos.
 """
 
 import argparse
@@ -39,11 +43,14 @@ import threading
 import time
 from pathlib import Path
 
-from robot_protocol import FLAG_EXPERIMENT, ROBOT_IP, ROBOT_PORT, is_telemetry, parse_telemetry
+from robot_protocol import ROBOT_IP, ROBOT_PORT, is_exp_packet, is_telemetry, parse_exp_packet
 
 KEEPALIVE_S = 0.3
-TRAILING_S = 0.5     # Espera pacotes atrasados depois do "exp fim"
-MAX_WAIT_S = 180.0
+REQUEST_PERIOD_S = 0.1   # Período dos pedidos de retransmissão
+STATUS_PERIOD_S = 1.0    # Consulta "exp estado" (caso o "exp fim" se perca)
+REORDER_MARGIN = 100     # Só pede amostras com esse atraso (podem estar a caminho)
+MAX_RANGES_PER_ROUND = 8
+FINISH_TIMEOUT_S = 5.0   # Tempo para recuperar o que faltar depois do fim
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "dados"
 
@@ -90,51 +97,108 @@ class Acquisition:
         raise RuntimeError("o robô não respondeu: confira se o PC está na rede FollowLine-Pico")
 
     def run(self, command):
-        """Executa o ensaio e retorna (amostras, estatísticas)."""
-        samples = []
-        expected_seq = None
-        lost_packets = 0
-        dropped = 0
+        """Executa o ensaio e retorna (amostras ordenadas, estatísticas).
+
+        As amostras chegam numeradas. O que se perder no Wi-Fi é pedido de novo ao
+        robô ("resend"), que guarda os últimos segundos do ensaio na RAM.
+        """
+        received = {}
+        unavailable = set()
+        highest = -1        # Maior índice recebido
+        scan_from = 0       # Antes deste índice não falta nada
+        exp_id = total = None
         finished_at = None
         result = None
+        requests = resent_packets = 0
+        last_request = last_status = last_data = start = time.time()
 
         self.send(f"exp {command}")
-        start = time.time()
         while True:
-            now = time.time()
-            if finished_at and now - finished_at > TRAILING_S:
-                break
-            if now - start > MAX_WAIT_S:
-                result = result or "timeout esperando o fim do ensaio"
-                break
-
             data = self.recv()
-            if data is None:
-                continue
-            if is_telemetry(data):
-                seq, dropped, packet = parse_telemetry(data)
-                if expected_seq is not None and seq != expected_seq:
-                    lost_packets += (seq - expected_seq) & 0xFFFFFFFF
-                expected_seq = (seq + 1) & 0xFFFFFFFF
-                samples.extend(s for s in packet if s["flags"] & FLAG_EXPERIMENT)
-                continue
+            now = time.time()
+            if data is not None:
+                if is_exp_packet(data):
+                    pkt_id, pkt_total, samples = parse_exp_packet(data)
+                    if exp_id is None:
+                        exp_id = pkt_id
+                    if pkt_id == exp_id:
+                        total = pkt_total
+                        if min(samples, default=highest + 1) <= highest:
+                            resent_packets += 1
+                        received.update(samples)
+                        highest = max(highest, max(samples, default=-1))
+                        last_data = now
+                elif not is_telemetry(data):
+                    text = data.decode(errors="replace")
+                    fields = dict(f.split("=", 1) for f in text.split() if "=" in f)
+                    if text.startswith("resend indisponivel"):
+                        first, count = map(int, text.split()[2:4])
+                        unavailable.update(range(first, first + count))
+                        continue
+                    if not text.startswith("exp estado"):
+                        print(f"  robô: {text}")
+                    if text.startswith(("exp inicio", "exp fim", "exp estado")) and "id" in fields:
+                        exp_id = int(fields["id"])
+                        total = int(fields["total"])
+                    if text.startswith("exp fim") or (text.startswith("exp estado: fim") and exp_id):
+                        finished_at = finished_at or now
+                        result = "ok"
+                    elif text.startswith(("exp erro", "exp abortado", "link perdido")):
+                        result = text
+                        break
 
-            text = data.decode(errors="replace")
-            print(f"  robô: {text}")
-            if text.startswith("exp fim"):
-                finished_at = time.time()
-                result = "ok"
-            elif text.startswith(("exp erro", "exp abortado", "link perdido")):
-                result = text
+            # Pede o que faltou (fora da margem de reordenação, ou tudo após o fim)
+            if exp_id is not None and now - last_request > REQUEST_PERIOD_S:
+                last_request = now
+                limit = total if finished_at else highest - REORDER_MARGIN
+                while scan_from in received or scan_from in unavailable:
+                    scan_from += 1
+                for first, count in missing_ranges(received, unavailable, scan_from, limit):
+                    self.send(f"resend {exp_id} {first} {count}")
+                    requests += 1
+
+            if not finished_at and now - last_status > STATUS_PERIOD_S and now - last_data > 0.5:
+                last_status = now
+                self.send("exp estado")
+
+            if finished_at and total is not None:
+                if len(received) + len(unavailable) >= total:
+                    break
+                if now - finished_at > FINISH_TIMEOUT_S:
+                    break
+            if total is None and now - start > 5.0:
+                result = result or "o robô não iniciou o ensaio"
                 break
 
-        self.send("stream 0")
-        return samples, {"resultado": result, "pacotes_perdidos": lost_packets,
-                         "amostras_descartadas_no_robo": dropped}
+        samples = [received[i] for i in sorted(received) if total is None or i < total]
+        stats = {
+            "resultado": result,
+            "amostras_previstas": total,
+            "amostras_recebidas": len(samples),
+            "pedidos_de_retransmissao": requests,
+            "pacotes_retransmitidos": resent_packets,
+            "amostras_irrecuperaveis": len(unavailable),
+        }
+        return samples, stats
 
     def close(self):
         self.alive = False
         self.send("stop")
+
+
+def missing_ranges(received, unavailable, start, limit):
+    """Até MAX_RANGES_PER_ROUND intervalos (início, quantidade) faltando em [start, limit)."""
+    ranges = []
+    i = start
+    while i < limit and len(ranges) < MAX_RANGES_PER_ROUND:
+        if i in received or i in unavailable:
+            i += 1
+            continue
+        first = i
+        while i < limit and i not in received and i not in unavailable and i - first < 480:
+            i += 1
+        ranges.append((first, i - first))
+    return ranges
 
 
 def to_rows(samples):
@@ -154,13 +218,13 @@ def to_rows(samples):
     return rows
 
 
-def check_sampling(samples, period_us):
-    """Conta amostras faltando pelo intervalo entre os carimbos de tempo."""
-    missing = 0
+def sampling_jitter(samples, period_us):
+    """Maior desvio (us) do intervalo entre amostras em relação ao período."""
+    worst = 0
     for a, b in zip(samples, samples[1:]):
         dt = (b["t_us"] - a["t_us"]) & 0xFFFFFFFF
-        missing += max(0, round(dt / period_us) - 1)
-    return missing
+        worst = max(worst, abs(dt - period_us))
+    return worst
 
 
 def default_name(command, campaign):
@@ -221,7 +285,9 @@ def main():
             path = base if args.repeticoes == 1 else base.with_name(f"{base.stem}_r{rep}{base.suffix}")
             print(f"[{rep}/{args.repeticoes}] exp {args.ensaio}")
             samples, stats = acq.run(args.ensaio)
-            missing = check_sampling(samples, period_us)
+            total = stats["amostras_previstas"] or 0
+            missing = total - len(samples)
+            stats["jitter_max_us"] = sampling_jitter(samples, period_us)
 
             metadata = {
                 "ensaio": args.ensaio,
@@ -239,9 +305,10 @@ def main():
             if stats["resultado"] != "ok":
                 print(f"  ATENÇÃO: ensaio não terminou normalmente ({stats['resultado']})")
                 break
-            if missing or stats["pacotes_perdidos"]:
-                print(f"  ATENÇÃO: {missing} amostras faltando ({stats['pacotes_perdidos']} pacotes perdidos)."
-                      " Considere repetir o ensaio.")
+            if stats["pacotes_retransmitidos"]:
+                print(f"  {stats['pacotes_retransmitidos']} pacotes recuperados por retransmissão")
+            if missing:
+                print(f"  ATENÇÃO: {missing} amostras faltando. Considere repetir o ensaio.")
             if rep < args.repeticoes:
                 time.sleep(args.intervalo)
     except KeyboardInterrupt:

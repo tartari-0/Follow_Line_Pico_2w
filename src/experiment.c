@@ -92,6 +92,10 @@ bool exp_running(void) {
     return running;
 }
 
+unsigned exp_total_samples(void) {
+    return EXP_PRE_MS + signal_ms + EXP_POST_MS;
+}
+
 const char *exp_description(void) {
     return description;
 }

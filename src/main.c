@@ -11,6 +11,8 @@
 #include "comm.h"
 #include "experiment.h"
 #include "git_version.h"
+#include "exp_log.h"
+#include "hardware/sync.h"
 
 // --- Estado do loop de controle (núcleo 1) ---
 static float pwm_cmd[2];          // Comando atual dos motores 1 e 2 (%)
@@ -22,6 +24,8 @@ static uint32_t overruns;         // Ciclos que passaram do período
 static uint32_t max_loop_us;
 static absolute_time_t last_cmd_time;
 static float vbat_filtered;
+static bool exp_sample;           // A amostra deste ciclo pertence a um ensaio
+static bool exp_just_finished;
 
 static void set_motor(int m, float percent) {
     if (percent > 100.0f) percent = 100.0f;
@@ -129,14 +133,20 @@ static void handle_command(char *line) {
                 stop_motors();
                 comm_reply("exp abortado");
             }
+        } else if (!strcmp(argv[1], "estado")) {
+            // Consultado pelo acquire.py caso a mensagem "exp fim" se perca
+            comm_reply("exp estado: %s id=%lu n=%lu total=%lu", exp_running() ? "rodando" : "fim",
+                       (unsigned long)exp_log_id(), (unsigned long)exp_log_count(),
+                       (unsigned long)exp_log_total());
         } else {
             const char *err = exp_start(argc - 1, &argv[1]);
             if (err) {
                 comm_reply("exp erro: %s", err);
             } else {
+                exp_log_reset(exp_total_samples());
                 enable_motors();
-                if (stream_div == 0) stream_div = 1; // Garante a telemetria a 1 kHz
-                comm_reply("exp inicio: %s", exp_description());
+                comm_reply("exp inicio: %s id=%lu total=%u", exp_description(),
+                           (unsigned long)exp_log_id(), exp_total_samples());
             }
         }
     } else if (exp_running() && (!strcmp(cmd, "motor") || !strcmp(cmd, "motors"))) {
@@ -178,14 +188,51 @@ static void handle_command(char *line) {
     }
 }
 
-static void loop_step(void) {
-    uint32_t t_us = time_us_32();
+// Parte crítica do ciclo, executada com as interrupções desligadas no instante
+// exato da amostragem: lê os encoders e aplica o PWM do ensaio.
+static void loop_sample(void) {
+    encoders_update();
 
-    // 1. Comandos
+    exp_sample = exp_running();
+    if (exp_sample) {
+        float u1, u2;
+        exp_update(&u1, &u2);
+        set_motor(1, u1);
+        set_motor(2, u2);
+        if (!exp_running()) exp_just_finished = true;
+    }
+}
+
+// Restante do ciclo, com interrupções ligadas
+static void loop_background(uint32_t t_us) {
+    vbat_filtered += 0.2f * (battery_voltage() - vbat_filtered); // tau ~ 5 ms
+
+    // 1. Registro da amostra do ensaio (transmitida e retransmitida pelo núcleo 0)
+    if (exp_sample) {
+        exp_sample_t e;
+        e.t_us = t_us;
+        e.enc[0] = encoder_count(1);
+        e.enc[1] = encoder_count(2);
+        e.speed[0] = encoder_speed(1);
+        e.speed[1] = encoder_speed(2);
+        e.pwm[0] = (int16_t)(pwm_cmd[0] * 10.0f);
+        e.pwm[1] = (int16_t)(pwm_cmd[1] * 10.0f);
+        e.vbat_mv = (uint16_t)(vbat_filtered * 1000.0f);
+        e.flags = TELEMETRY_FLAG_MOTORS | TELEMETRY_FLAG_EXPERIMENT;
+        exp_log_add(&e);
+    }
+    if (exp_just_finished) {
+        exp_just_finished = false;
+        stop_motors();
+        comm_reply("exp fim: %s id=%lu total=%lu", exp_description(),
+                   (unsigned long)exp_log_id(), (unsigned long)exp_log_count());
+    }
+
+    // 2. Comandos
     char cmd[COMM_CMD_MAX_LEN];
     while (comm_get_command(cmd, sizeof(cmd))) handle_command(cmd);
 
-    // 2. Segurança: sem comandos por muito tempo -> para os motores
+    // 3. Segurança: sem comandos por muito tempo -> para os motores
     if (motors_on && absolute_time_diff_us(last_cmd_time, get_absolute_time()) > LINK_TIMEOUT_MS * 1000) {
         if (exp_running()) {
             exp_stop();
@@ -195,34 +242,15 @@ static void loop_step(void) {
         comm_reply("link perdido: motores parados");
     }
 
-    // 3. Sensores (encoders lidos agora; barra e ADC já lidos em segundo plano)
-    encoders_update();
-    vbat_filtered += 0.2f * (battery_voltage() - vbat_filtered); // tau ~ 5 ms
-
-    // 4. Ensaio em malha aberta
-    bool exp_sample = exp_running();
-    if (exp_sample) {
-        float u1, u2;
-        if (exp_update(&u1, &u2)) {
-            set_motor(1, u1);
-            set_motor(2, u2);
-        } else {
-            exp_sample = false;
-        }
-        if (!exp_running()) {
-            stop_motors();
-            comm_reply("exp fim: %s", exp_description());
-        }
-    }
-
+    // 4. Barra de sensores (já lida em segundo plano pelo PIO/DMA)
     static uint32_t last_line_seq;
     uint16_t raw[LINE_NUM_SENSORS];
     uint32_t seq = line_get_raw(raw);
     if (calibrating && seq != last_line_seq) line_calibrate_update(raw);
     last_line_seq = seq;
 
-    // 5. Telemetria (durante ensaios, todas as amostras)
-    if (stream_div && (exp_sample || loop_count % stream_div == 0)) {
+    // 5. Telemetria livre (visualização; sem garantia de entrega)
+    if (stream_div && loop_count % stream_div == 0) {
         telemetry_sample_t s;
         s.t_us = t_us;
         s.enc[0] = encoder_count(1);
@@ -256,22 +284,30 @@ static void control_core_main(void) {
 
     last_cmd_time = get_absolute_time();
     vbat_filtered = battery_voltage();
-    absolute_time_t next = get_absolute_time();
+    absolute_time_t next = delayed_by_us(get_absolute_time(), LOOP_PERIOD_US);
 
     while (true) {
-        absolute_time_t start = get_absolute_time();
-        loop_step();
+        // Espera com interrupções ligadas até pouco antes do instante de amostragem;
+        // depois as desliga para que nada atrase a leitura dos encoders.
+        busy_wait_until(from_us_since_boot(to_us_since_boot(next) - IRQ_GUARD_US));
+        uint32_t irq_state = save_and_disable_interrupts();
+        busy_wait_until(next);
+        uint32_t t_us = time_us_32();
+        loop_sample();
+        restore_interrupts(irq_state);
+
+        loop_background(t_us);
         loop_count++;
 
-        uint32_t elapsed = (uint32_t)absolute_time_diff_us(start, get_absolute_time());
+        uint32_t elapsed = time_us_32() - t_us;
         if (elapsed > max_loop_us) max_loop_us = elapsed;
 
         next = delayed_by_us(next, LOOP_PERIOD_US);
-        if (absolute_time_diff_us(get_absolute_time(), next) < 0) {
+        if (absolute_time_diff_us(get_absolute_time(), next) < IRQ_GUARD_US) {
             overruns++;
-            next = get_absolute_time(); // Não tenta "recuperar" ciclos perdidos
+            // Não tenta "recuperar" ciclos perdidos
+            next = delayed_by_us(get_absolute_time(), LOOP_PERIOD_US);
         }
-        busy_wait_until(next);
     }
 }
 

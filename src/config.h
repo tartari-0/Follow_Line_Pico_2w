@@ -85,7 +85,14 @@
 // Ensaios em malha aberta: tempo parado antes e depois do sinal, e duração máxima
 #define EXP_PRE_MS  500
 #define EXP_POST_MS 1500
-#define EXP_MAX_MS  120000
+#define EXP_MAX_MS  600000
+
+// Buffer circular das amostras de ensaio para retransmissão (5 s a 1 kHz, 28 bytes cada)
+#define EXP_LOG_LEN 5000
+
+// Interrupções desligadas nesta janela antes do instante de amostragem (us),
+// para que nenhuma interrupção atrase a leitura dos encoders
+#define IRQ_GUARD_US 300
 
 // Rede Wi-Fi criada pelo robô (modo Access Point). IP do robô: 192.168.4.1
 #define WIFI_SSID     "FollowLine-Pico"

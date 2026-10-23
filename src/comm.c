@@ -7,6 +7,7 @@
 #include "pico/cyw43_arch.h"
 #include "lwip/udp.h"
 #include "dhcpserver.h"
+#include "exp_log.h"
 
 #define REPLY_MAX_LEN 128
 #define TELEMETRY_QUEUE_LEN 512 // ~0,5 s de folga a 1 kHz
@@ -14,11 +15,13 @@
 
 typedef struct { char text[COMM_CMD_MAX_LEN]; } cmd_msg_t;
 typedef struct { char text[REPLY_MAX_LEN]; } reply_msg_t;
+typedef struct { uint32_t exp_id, first, count; } resend_req_t;
 
 // Filas entre núcleos (seguras para multicore)
 static queue_t cmd_queue;       // comunicação (núcleo 0) -> controle (núcleo 1)
 static queue_t reply_queue;     // controle -> comunicação
 static queue_t telemetry_queue; // controle -> comunicação
+static queue_t resend_queue;    // pedidos de retransmissão do PC (só no núcleo 0)
 
 static volatile uint32_t dropped_samples;
 
@@ -30,6 +33,10 @@ static bool has_peer;
 static dhcp_server_t dhcp_server;
 static telemetry_packet_t packet;
 static uint32_t packet_seq;
+static exp_packet_t exp_packet;
+static uint32_t exp_sent_id;    // Ensaio cujas amostras estão sendo transmitidas
+static uint32_t exp_sent_index; // Próxima amostra a transmitir
+static uint64_t exp_wait_start;
 
 // Callback do lwIP: chega um comando do PC
 static void on_udp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p,
@@ -47,6 +54,13 @@ static void on_udp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p,
     msg.text[n] = '\0';
     pbuf_free(p);
 
+    // "resend <id> <primeira> <quantidade>" é atendido aqui mesmo, sem passar pelo controle
+    resend_req_t req;
+    if (sscanf(msg.text, "resend %lu %lu %lu", (unsigned long *)&req.exp_id,
+               (unsigned long *)&req.first, (unsigned long *)&req.count) == 3) {
+        queue_try_add(&resend_queue, &req);
+        return;
+    }
     queue_try_add(&cmd_queue, &msg);
 }
 
@@ -69,6 +83,72 @@ static void send_packet(void) {
     uint16_t len = offsetof(telemetry_packet_t, samples) + packet.count * sizeof(telemetry_sample_t);
     udp_send_buf(&packet, len);
     packet.count = 0;
+}
+
+// Envia as amostras [first, first + count) do ensaio atual.
+// Retorna quantas estavam disponíveis no buffer circular.
+static uint32_t send_exp_samples(uint32_t id, uint32_t first, uint32_t count) {
+    uint32_t sent = 0;
+    exp_packet.magic = EXP_PACKET_MAGIC;
+    exp_packet.exp_id = id;
+    exp_packet.total = exp_log_total();
+    exp_packet.count = 0;
+    exp_packet.first_index = first;
+
+    for (uint32_t i = first; i < first + count; i++) {
+        exp_sample_t *dst = &exp_packet.samples[exp_packet.count];
+        if (!exp_log_get(i, dst) || exp_log_id() != id) {
+            break; // Indisponível: o resto do intervalo também está
+        }
+        exp_packet.count++;
+        sent++;
+        if (exp_packet.count == EXP_SAMPLES_PER_PACKET || i + 1 == first + count) {
+            udp_send_buf(&exp_packet, offsetof(exp_packet_t, samples) + exp_packet.count * sizeof(exp_sample_t));
+            exp_packet.count = 0;
+            exp_packet.first_index = i + 1;
+        }
+    }
+    if (exp_packet.count > 0) {
+        udp_send_buf(&exp_packet, offsetof(exp_packet_t, samples) + exp_packet.count * sizeof(exp_sample_t));
+    }
+    return sent;
+}
+
+// Transmite as amostras novas do ensaio (pacotes cheios, ou o que houver após 20 ms)
+static void stream_exp_samples(void) {
+    uint32_t id = exp_log_id();
+    if (id != exp_sent_id) {
+        exp_sent_id = id;
+        exp_sent_index = 0;
+        exp_wait_start = time_us_64();
+    }
+    uint32_t pending = exp_log_count() - exp_sent_index;
+    if (pending == 0) {
+        exp_wait_start = time_us_64();
+        return;
+    }
+    if (pending >= EXP_SAMPLES_PER_PACKET || time_us_64() - exp_wait_start > PACKET_MAX_AGE_US) {
+        uint32_t n = pending < EXP_SAMPLES_PER_PACKET ? pending : EXP_SAMPLES_PER_PACKET;
+        uint32_t sent = send_exp_samples(id, exp_sent_index, n);
+        // Se algo já foi sobrescrito (link muito lento), pula: o PC verá o buraco
+        exp_sent_index += sent ? sent : n;
+        exp_wait_start = time_us_64();
+    }
+}
+
+static void handle_resend_requests(void) {
+    resend_req_t req;
+    while (queue_try_remove(&resend_queue, &req)) {
+        if (req.exp_id != exp_log_id()) continue;
+        if (req.count > 10 * EXP_SAMPLES_PER_PACKET) req.count = 10 * EXP_SAMPLES_PER_PACKET;
+        uint32_t sent = send_exp_samples(req.exp_id, req.first, req.count);
+        if (sent < req.count && req.first + sent < exp_log_count()) {
+            char msg[64];
+            int n = snprintf(msg, sizeof(msg), "resend indisponivel %lu %lu",
+                             (unsigned long)(req.first + sent), (unsigned long)(req.count - sent));
+            udp_send_buf(msg, (uint16_t)n);
+        }
+    }
 }
 
 // Lê comandos digitados no terminal USB, linha a linha
@@ -125,6 +205,9 @@ void comm_run(void) {
             send_packet();
         }
 
+        stream_exp_samples();
+        handle_resend_requests();
+
         sleep_us(500);
     }
 }
@@ -133,6 +216,7 @@ void comm_init(void) {
     queue_init(&cmd_queue, sizeof(cmd_msg_t), 8);
     queue_init(&reply_queue, sizeof(reply_msg_t), 16);
     queue_init(&telemetry_queue, sizeof(telemetry_sample_t), TELEMETRY_QUEUE_LEN);
+    queue_init(&resend_queue, sizeof(resend_req_t), 32);
 }
 
 bool comm_get_command(char *buf, size_t len) {

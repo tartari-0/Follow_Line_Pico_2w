@@ -20,6 +20,31 @@ SAMPLE_FIELDS = (["t_us", "enc1", "enc2", "speed1", "speed2", "pwm1_x10", "pwm2_
                  + ["side_left", "side_right", "vbat_mv", "flags"])
 
 
+# --- Pacotes de ensaio (com índice por amostra, para retransmissão) ---
+EXP_PACKET_MAGIC = 0xA55B
+# magic, count, exp_id, first_index, total
+EXP_HEADER = struct.Struct("<HHIII")
+# t_us, enc[2], speed[2], pwm[2], vbat_mv, flags
+EXP_SAMPLE = struct.Struct("<I2i2f2hHH")
+assert EXP_SAMPLE.size == 28
+
+EXP_SAMPLE_FIELDS = ["t_us", "enc1", "enc2", "speed1", "speed2", "pwm1_x10", "pwm2_x10", "vbat_mv", "flags"]
+
+
+def is_exp_packet(data):
+    return len(data) >= EXP_HEADER.size and struct.unpack_from("<H", data)[0] == EXP_PACKET_MAGIC
+
+
+def parse_exp_packet(data):
+    """Retorna (exp_id, total, {índice: dict da amostra})."""
+    _, count, exp_id, first, total = EXP_HEADER.unpack_from(data)
+    samples = {}
+    for i in range(count):
+        values = EXP_SAMPLE.unpack_from(data, EXP_HEADER.size + i * EXP_SAMPLE.size)
+        samples[first + i] = dict(zip(EXP_SAMPLE_FIELDS, values))
+    return exp_id, total, samples
+
+
 def is_telemetry(data):
     return len(data) >= HEADER.size and struct.unpack_from("<H", data)[0] == TELEMETRY_MAGIC
 
