@@ -1,0 +1,27 @@
+{
+  "ensaio": "coast 1 100 3000 5000",
+  "repeticao": 1,
+  "data": "2026-10-23 10:11:38",
+  "nota": "100nF  motor esquerdo",
+  "firmware": {
+    "fw": "0.4",
+    "git": "0aad602",
+    "ppr": "815.0",
+    "loop_us": "1000",
+    "speed_window": "10",
+    "pre_ms": "500",
+    "post_ms": "1500",
+    "pwm_hz": "20000"
+  },
+  "git_ferramentas": "0aad602",
+  "amostras": 8500,
+  "amostras_faltando": 0,
+  "resultado": "ok",
+  "amostras_previstas": 8500,
+  "amostras_recebidas": 8500,
+  "pedidos_de_retransmissao": 0,
+  "pacotes_retransmitidos": 0,
+  "amostras_irrecuperaveis": 0,
+  "jitter_max_us": 4,
+  "intervalos_irregulares": 0
+}
