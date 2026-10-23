@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Plota os ensaios gravados pelo tools/acquire.py.
+"""Plota os ensaios gravados pelo acquire.py.
 
-    python3 tools/plot_exp.py dados/arquivo.csv            # abre a janela
-    python3 tools/plot_exp.py dados/*.csv --salvar         # salva PNG ao lado de cada CSV
-    python3 tools/plot_exp.py dados/a.csv dados/b.csv --sobrepor   # compara ensaios
+    python3 aquisicoes/ferramentas/plot_exp.py aquisicoes/dados/<pasta>/arquivo.csv
+    python3 aquisicoes/ferramentas/plot_exp.py aquisicoes/dados/<pasta>/*.csv --salvar
+    python3 aquisicoes/ferramentas/plot_exp.py a.csv b.csv --sobrepor   # compara ensaios
+
+--salvar grava o PNG ao lado de cada CSV em vez de abrir a janela.
 """
 
 import argparse

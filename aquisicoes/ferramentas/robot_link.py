@@ -2,7 +2,7 @@
 """Terminal de comunicação com o robô via Wi-Fi (UDP).
 
 Conecte o PC na rede "FollowLine-Pico" e rode:
-    python3 tools/robot_link.py
+    python3 aquisicoes/ferramentas/robot_link.py
 
 Digite comandos do robô (help, status, motor 1 30, stream 1, ...) ou comandos locais:
     :log <arquivo.csv>   grava a telemetria recebida em CSV

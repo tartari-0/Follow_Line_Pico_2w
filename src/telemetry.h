@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "config.h"
 
-// Formato binário (little-endian) enviado por UDP. Precisa bater com tools/robot_protocol.py.
+// Formato binário (little-endian) enviado por UDP. Precisa bater com aquisicoes/ferramentas/robot_protocol.py.
 
 #define TELEMETRY_MAGIC 0xA55A
 
@@ -32,7 +32,7 @@ typedef struct __attribute__((packed)) {
     telemetry_sample_t samples[TELEMETRY_SAMPLES_PER_PACKET];
 } telemetry_packet_t;
 
-_Static_assert(sizeof(telemetry_sample_t) == 48, "atualize tools/robot_protocol.py");
+_Static_assert(sizeof(telemetry_sample_t) == 48, "atualize aquisicoes/ferramentas/robot_protocol.py");
 _Static_assert(sizeof(telemetry_packet_t) <= 1472, "pacote maior que o MTU UDP");
 
 #endif

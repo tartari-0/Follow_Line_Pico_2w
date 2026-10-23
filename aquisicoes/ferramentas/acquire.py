@@ -4,10 +4,12 @@
 O sinal é gerado dentro do robô (loop de 1 kHz); o PC só dispara o ensaio e
 recebe a telemetria. Conecte o PC na rede "FollowLine-Pico" antes.
 
-Exemplos:
-    python3 tools/acquire.py "step 1 40 2000" --nota "suspenso, bateria cheia"
-    python3 tools/acquire.py "stairs ambos 100 10 2000" --repeticoes 3
-    python3 tools/acquire.py "prbs 2 50 20 50 20000" -o dados/prbs_m2.csv
+Exemplos (de qualquer pasta):
+    python3 aquisicoes/ferramentas/acquire.py "step 1 40 2000" --campanha degraus_suspenso
+    python3 aquisicoes/ferramentas/acquire.py "stairs ambos 100 10 2000" --repeticoes 3
+    python3 aquisicoes/ferramentas/acquire.py "prbs 2 50 20 50 20000" -o meu_ensaio.csv
+
+Por padrão os arquivos vão para aquisicoes/dados/<data>_<campanha>/<hora>_<ensaio>.csv
 
 Ensaios (alvo: 1, 2, ambos, rot):
     step   <alvo> <pwm> <duração_ms>
@@ -22,7 +24,8 @@ Gera <arquivo>.csv com as colunas:
     speed1/2 velocidade das rodas calculada no robô (rad/s)
     vbat    tensão da bateria (V)
     t_us    relógio do robô (us), para checar a regularidade da amostragem
-e <arquivo>.json com o comando, a data, a nota e os parâmetros do firmware.
+e <arquivo>.json com o comando, a data, a nota, os parâmetros do firmware e o
+commit do git do firmware e das ferramentas (para saber exatamente qual código gerou os dados).
 """
 
 import argparse
@@ -30,6 +33,7 @@ import csv
 import json
 import re
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -40,6 +44,8 @@ from robot_protocol import FLAG_EXPERIMENT, ROBOT_IP, ROBOT_PORT, is_telemetry, 
 KEEPALIVE_S = 0.3
 TRAILING_S = 0.5     # Espera pacotes atrasados depois do "exp fim"
 MAX_WAIT_S = 180.0
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "dados"
 
 CSV_COLUMNS = ["t_s", "pwm1", "pwm2", "enc1", "enc2", "speed1", "speed2", "vbat", "t_us"]
 
@@ -157,9 +163,20 @@ def check_sampling(samples, period_us):
     return missing
 
 
-def default_name(command):
+def default_name(command, campaign):
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", command).strip("_")
-    return Path("dados") / f"{time.strftime('%Y%m%d_%H%M%S')}_{slug}.csv"
+    folder = DATA_DIR / f"{time.strftime('%Y-%m-%d')}_{campaign}"
+    return folder / f"{time.strftime('%H%M%S')}_{slug}.csv"
+
+
+def git_version():
+    """Commit das ferramentas no PC ("-dirty" = alterações não commitadas)."""
+    try:
+        return subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=7"],
+                              cwd=Path(__file__).resolve().parent, capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "desconhecido"
 
 
 def save(path, rows, metadata):
@@ -175,7 +192,10 @@ def save(path, rows, metadata):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("ensaio", help='comando do ensaio, entre aspas (ex.: "step 1 40 2000")')
-    parser.add_argument("-o", "--saida", type=Path, help="arquivo CSV (padrão: dados/<data>_<ensaio>.csv)")
+    parser.add_argument("-o", "--saida", type=Path,
+                        help="arquivo CSV (padrão: aquisicoes/dados/<data>_<campanha>/<hora>_<ensaio>.csv)")
+    parser.add_argument("--campanha", default="geral",
+                        help="nome da série de ensaios, vira o nome da pasta (ex.: degraus_suspenso)")
     parser.add_argument("--nota", default="", help="anotação salva no .json (condição do ensaio)")
     parser.add_argument("--repeticoes", type=int, default=1)
     parser.add_argument("--intervalo", type=float, default=5.0, help="pausa entre repetições (s)")
@@ -183,11 +203,18 @@ def main():
     parser.add_argument("--port", type=int, default=ROBOT_PORT)
     args = parser.parse_args()
 
-    base = args.saida or default_name(args.ensaio)
+    base = args.saida or default_name(args.ensaio, args.campanha)
+    tools_git = git_version()
     acq = Acquisition(args.ip, args.port)
     try:
         info = acq.query_info()
         print(f"robô: {info}")
+        fw_git = info.get("git", "desconhecido")
+        if fw_git.endswith("-dirty"):
+            print("ATENÇÃO: o firmware foi compilado com alterações não commitadas;"
+                  " não será possível recuperar exatamente esse código depois.")
+        elif fw_git.split("-")[0] != tools_git.split("-")[0]:
+            print(f"aviso: firmware ({fw_git}) e ferramentas ({tools_git}) estão em commits diferentes")
         period_us = int(info.get("loop_us", 1000))
 
         for rep in range(1, args.repeticoes + 1):
@@ -202,6 +229,7 @@ def main():
                 "data": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "nota": args.nota,
                 "firmware": info,
+                "git_ferramentas": tools_git,
                 "amostras": len(samples),
                 "amostras_faltando": missing,
                 **stats,

@@ -51,10 +51,10 @@ src/
   lwipopts.h             configuração da pilha TCP/IP
   main.c                 loop de 1 kHz (núcleo 1) e interpretador de comandos
 lib/dhcpserver/          servidor DHCP (MIT, do pico-examples)
-tools/robot_link.py      terminal no PC: comandos + gravação de telemetria em CSV
-tools/acquire.py         executa ensaios e salva CSV + JSON em dados/
-tools/plot_exp.py        plota os ensaios
-tools/robot_protocol.py  formato da telemetria (igual a src/telemetry.h)
+cmake/git_version.cmake  embute o commit do git no firmware (comando info)
+aquisicoes/
+  ferramentas/           scripts do PC: terminal, aquisição, plot, protocolo
+  dados/                 ensaios gravados (CSV + JSON + PNG), uma pasta por campanha
 tests/                   programas de teste usados no desenvolvimento
 docs/                    esquemático
 ```
@@ -67,7 +67,7 @@ O robô cria a própria rede Wi-Fi (não precisa de roteador):
 - **Robô:** `192.168.4.1`, porta UDP `4210`
 
 ```sh
-python3 tools/robot_link.py
+python3 aquisicoes/ferramentas/robot_link.py
 ```
 
 Comandos (também funcionam pelo terminal USB — o terminal precisa enviar Enter/fim de linha):
@@ -106,44 +106,8 @@ Grave `build/seguidor_de_linha.uf2` segurando BOOTSEL ao conectar o USB.
 
 ## Ensaios em malha aberta
 
-O sinal é gerado **dentro do robô**, no loop de 1 kHz, então o Wi-Fi não interfere no tempo
-do sinal aplicado. O PC dispara o ensaio e grava a telemetria. Todo ensaio tem 0,5 s parado
-antes e 1,5 s parado depois do sinal (`EXP_PRE_MS` / `EXP_POST_MS`).
-
-```sh
-python3 tools/acquire.py "step 1 40 2000" --nota "suspenso, bateria 12.4 V"
-python3 tools/acquire.py "stairs ambos 100 10 2000" --repeticoes 3
-python3 tools/plot_exp.py dados/*.csv --salvar
-```
-
-| Ensaio | Parâmetros | Uso |
-|---|---|---|
-| `step <alvo> <pwm> <ms>` | degrau | constante de tempo e ganho |
-| `stairs <alvo> <pwm_max> <n> <ms_degrau>` | escada que sobe até `pwm_max` e desce | zona morta, curva estática, histerese |
-| `ramp <alvo> <pwm_ini> <pwm_fim> <ms>` | rampa linear | curva estática |
-| `prbs <alvo> <pwm_medio> <amp> <ms_bit> <ms>` | PRBS de 16 bits, semente fixa | identificação |
-
-Alvo: `1` (esq), `2` (dir), `ambos` (mesmo sinal) ou `rot` (motor 2 com o sinal invertido).
-PWM negativo = ré.
-
-Cada ensaio gera `dados/<data>_<ensaio>.csv` e um `.json` com o comando, a nota, os parâmetros
-do firmware e a contagem de amostras perdidas. Colunas do CSV:
-
-| Coluna | Descrição |
-|---|---|
-| `t_s` | tempo desde o início do ensaio (s) |
-| `pwm1`, `pwm2` | comando dos motores (%) |
-| `enc1`, `enc2` | contagem absoluta dos encoders (pulsos 4X, 815 por volta da roda) |
-| `speed1`, `speed2` | velocidade da roda calculada no robô (rad/s, janela de 10 ms) |
-| `vbat` | bateria (V, filtro de ~5 ms) |
-| `t_us` | relógio do robô (us) |
-
-**Observações para a modelagem:**
-- Durante o ensaio o driver fica sempre habilitado: PWM 0 é *freio* (terminais em curto), ou
-  seja, 0 V aplicado. Fora dos ensaios, `stop` desabilita o driver e o motor fica em roda livre.
-- A tensão aplicada ao motor pode ser estimada por `pwm/100 * vbat`.
-- `speed` tem resolução de 0,77 rad/s e atraso médio de 5 ms. Para outros estimadores, use
-  `enc` e `t_s`.
+Ferramentas, dados e instruções dos ensaios ficam em [`aquisicoes/`](aquisicoes/README.md),
+separados do firmware.
 
 ## Roteiro de teste do hardware
 

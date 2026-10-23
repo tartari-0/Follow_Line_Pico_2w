@@ -66,4 +66,14 @@ target_link_libraries(seguidor_de_linha
         pico_cyw43_arch_lwip_threadsafe_background
 )
 
+# Commit do git embutido no firmware (comando "info"), para rastrear os ensaios
+add_custom_target(git_version
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_CURRENT_LIST_DIR}
+            -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/git_version.h
+            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/git_version.cmake
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/generated/git_version.h
+)
+add_dependencies(seguidor_de_linha git_version)
+target_include_directories(seguidor_de_linha PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
 pico_add_extra_outputs(seguidor_de_linha)

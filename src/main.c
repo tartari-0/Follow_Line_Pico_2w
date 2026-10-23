@@ -10,6 +10,7 @@
 #include "analog.h"
 #include "comm.h"
 #include "experiment.h"
+#include "git_version.h"
 
 // --- Estado do loop de controle (núcleo 1) ---
 static float pwm_cmd[2];          // Comando atual dos motores 1 e 2 (%)
@@ -99,9 +100,9 @@ static void handle_command(char *line) {
     } else if (!strcmp(cmd, "help")) {
         print_help();
     } else if (!strcmp(cmd, "info")) {
-        // Lido pelo tools/acquire.py e salvo junto com os dados
-        comm_reply("info fw=%s ppr=%.1f loop_us=%d speed_window=%d pre_ms=%d post_ms=%d pwm_hz=%d",
-                   PICO_PROGRAM_VERSION_STRING, (double)ENC_PULSES_PER_REV, LOOP_PERIOD_US,
+        // Lido pelo aquisicoes/ferramentas/acquire.py e salvo junto com os dados
+        comm_reply("info fw=%s git=%s ppr=%.1f loop_us=%d speed_window=%d pre_ms=%d post_ms=%d pwm_hz=%d",
+                   PICO_PROGRAM_VERSION_STRING, GIT_VERSION, (double)ENC_PULSES_PER_REV, LOOP_PERIOD_US,
                    ENC_SPEED_WINDOW, EXP_PRE_MS, EXP_POST_MS, PWM_FREQ_HZ);
     } else if (!strcmp(cmd, "status")) {
         comm_reply("bat: %.2f V | enc: %ld %ld | vel: %.2f %.2f rad/s | pwm: %.1f %.1f | motores %s",
